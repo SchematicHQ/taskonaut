@@ -1,0 +1,40 @@
+{
+  "name": "see",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "schematic-ecs-exec - Run AWS ECS exec commands",
+  "main": "index.js",
+  "bin": {
+    "see": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "build": "chmod +x index.js",
+    "postinstall": "chmod +x index.js && npm run check-deps",
+    "check-deps": "command -v aws >/dev/null 2>&1 || echo 'AWS CLI not found' && command -v session-manager-plugin >/dev/null 2>&1 || echo 'Session Manager Plugin not found'",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "aws",
+    "ecs",
+    "exec",
+    "cli"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-ecs": "^3.687.0",
+    "@aws-sdk/credential-providers": "^3.687.0",
+    "chalk": "^5.3.0",
+    "commander": "^11.1.0",
+    "conf": "^13.0.1",
+    "dotenv": "^16.4.5",
+    "figlet": "^1.8.0",
+    "gradient-string": "^3.0.0",
+    "inquirer": "^9.3.7",
+    "ora": "^8.1.1",
+    "pino": "^8.21.0",
+    "pino-pretty": "^10.3.1"
+  }
+}
