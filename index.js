@@ -11,12 +11,14 @@ import figlet from "figlet";
 import { pastel } from "gradient-string";
 import ora from "ora";
 import Conf from "conf";
+import fs from "fs";
+import path from "path";
+import os from "os";
 
 dotenv.config();
 
-// Add after imports
 const config = new Conf({
-  projectName: "schematic-ecs-exe",
+  projectName: "see",
   schema: {
     awsProfile: {
       type: "string",
@@ -30,8 +32,25 @@ const config = new Conf({
       type: "string",
       default: "",
     },
+    awsProfiles: {
+      type: "array",
+      default: [],
+    },
+    lastProfileSync: {
+      type: "number",
+      default: 0,
+    },
   },
 });
+
+const AWS_REGIONS = [
+  "us-east-1",
+  "us-east-2",
+  "us-west-1",
+  "us-west-2",
+  "eu-west-1",
+  "eu-west-2",
+];
 
 // Fancy banner
 console.log(
@@ -55,16 +74,72 @@ const logger = pino({
   },
 });
 
+async function syncAwsProfiles() {
+  const spinner = ora("Syncing AWS profiles...").start();
+  try {
+    const credentialsPath = path.join(os.homedir(), ".aws", "credentials");
+    const configPath = path.join(os.homedir(), ".aws", "config");
+
+    const profiles = new Set();
+
+    if (fs.existsSync(credentialsPath)) {
+      const content = fs.readFileSync(credentialsPath, "utf-8");
+      content
+        .match(/\[(.*?)\]/g)
+        ?.forEach((profile) => profiles.add(profile.replace(/[\[\]]/g, "")));
+    }
+
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, "utf-8");
+      content
+        .match(/\[profile (.*?)\]/g)
+        ?.forEach((profile) =>
+          profiles.add(profile.replace(/\[profile (.*?)\]/, "$1"))
+        );
+    }
+
+    const profilesList = Array.from(profiles);
+    config.set("awsProfiles", profilesList);
+    config.set("lastProfileSync", Date.now());
+
+    spinner.succeed(`Found ${profilesList.length} AWS profiles`);
+    return profilesList;
+  } catch (err) {
+    spinner.fail("Failed to sync AWS profiles");
+    logger.error(chalk.red("Error syncing profiles:", err));
+    throw err;
+  }
+}
+
+async function getAwsProfiles() {
+  const lastSync = config.get("lastProfileSync");
+  const SYNC_INTERVAL = 1000 * 60 * 60; // 1 hour
+
+  if (Date.now() - lastSync > SYNC_INTERVAL) {
+    return syncAwsProfiles();
+  }
+
+  return config.get("awsProfiles");
+}
+
 const initAWS = async () => {
   try {
-    const profile = config.get("awsProfile");
-    const region = config.get("awsRegion");
+    const profiles = await getAwsProfiles();
+    const currentProfile = config.get("awsProfile");
 
+    if (!profiles.includes(currentProfile)) {
+      logger.warn(
+        chalk.yellow(`Profile ${currentProfile} not found, please reconfigure`)
+      );
+      throw new Error("Invalid AWS profile");
+    }
+
+    const region = config.get("awsRegion");
     logger.info(
-      chalk.dim(`Using AWS Profile: ${profile} and Region: ${region}`)
+      chalk.dim(`Using AWS Profile: ${currentProfile} and Region: ${region}`)
     );
 
-    const credentials = await fromSSO({ profile })();
+    const credentials = await fromSSO({ profile: currentProfile })();
     return new ECS({ region, credentials });
   } catch (err) {
     logger.error(chalk.red("AWS initialization failed:", err));
@@ -264,33 +339,46 @@ program
 
 program
   .command("config")
-  .description("Configure AWS settings")
+  .description("Configure AWS profile and region")
   .action(async () => {
     try {
+      const spinner = ora("Loading AWS profiles...").start();
+      const profiles = await getAwsProfiles();
+      spinner.succeed("AWS profiles loaded");
+
       const { profile } = await inquirer.prompt([
         {
-          type: "input",
+          type: "list",
           name: "profile",
-          message: "Enter AWS Profile:",
-          default: config.get("awsProfile"),
+          message: chalk.blue("Select AWS Profile:"),
+          prefix: "🔑",
+          choices: profiles.map((p) => ({
+            name: chalk.green(p),
+            value: p,
+          })),
         },
       ]);
 
       const { region } = await inquirer.prompt([
         {
-          type: "input",
+          type: "list",
           name: "region",
-          message: "Enter AWS Region:",
-          default: config.get("awsRegion"),
+          message: chalk.blue("Select AWS Region:"),
+          prefix: "🌎",
+          choices: AWS_REGIONS.map((r) => ({
+            name: chalk.green(r),
+            value: r,
+          })),
         },
       ]);
 
       config.set("awsProfile", profile);
       config.set("awsRegion", region);
 
-      logger.info(chalk.green("Configuration saved!"));
+      logger.info(chalk.green("✨ Configuration saved successfully!"));
     } catch (err) {
-      logger.error(chalk.red("Failed to save configuration:", err));
+      logger.error(chalk.red("Failed to configure:", err));
+      process.exit(1);
     }
   });
 
