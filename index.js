@@ -339,47 +339,109 @@ program
 
 program
   .command("config")
-  .description("Configure AWS profile and region")
-  .action(async () => {
-    try {
-      const spinner = ora("Loading AWS profiles...").start();
-      const profiles = await getAwsProfiles();
-      spinner.succeed("AWS profiles loaded");
+  .addCommand(
+    new Command("set")
+      .description("Set AWS profile and region")
+      .addHelpText("after", chalk.dim("Example: see config set"))
+      .action(async () => {
+        try {
+          const spinner = ora("Loading AWS profiles...").start();
+          const profiles = await getAwsProfiles();
+          spinner.succeed("AWS profiles loaded");
 
-      const { profile } = await inquirer.prompt([
-        {
-          type: "list",
-          name: "profile",
-          message: chalk.blue("Select AWS Profile:"),
-          prefix: "🔑",
-          choices: profiles.map((p) => ({
-            name: chalk.green(p),
-            value: p,
-          })),
-        },
-      ]);
+          const { profile } = await inquirer.prompt([
+            {
+              type: "list",
+              name: "profile",
+              message: chalk.blue("Select AWS Profile:"),
+              prefix: "🔑",
+              choices: profiles.map((p) => ({
+                name: chalk.green(p),
+                value: p,
+              })),
+            },
+          ]);
 
-      const { region } = await inquirer.prompt([
-        {
-          type: "list",
-          name: "region",
-          message: chalk.blue("Select AWS Region:"),
-          prefix: "🌎",
-          choices: AWS_REGIONS.map((r) => ({
-            name: chalk.green(r),
-            value: r,
-          })),
-        },
-      ]);
+          const { region } = await inquirer.prompt([
+            {
+              type: "list",
+              name: "region",
+              message: chalk.blue("Select AWS Region:"),
+              prefix: "🌎",
+              choices: AWS_REGIONS.map((r) => ({
+                name: chalk.green(r),
+                value: r,
+              })),
+            },
+          ]);
 
-      config.set("awsProfile", profile);
-      config.set("awsRegion", region);
+          config.set("awsProfile", profile);
+          config.set("awsRegion", region);
 
-      logger.info(chalk.green("✨ Configuration saved successfully!"));
-    } catch (err) {
-      logger.error(chalk.red("Failed to configure:", err));
-      process.exit(1);
-    }
-  });
+          logger.info(chalk.green("✨ Configuration saved successfully!"));
+        } catch (err) {
+          logger.error(chalk.red("Failed to configure:", err));
+          process.exit(1);
+        }
+      })
+  )
+  .addCommand(
+    new Command("show")
+      .alias("path")
+      .description("Show configuration path and current values")
+      .action(async () => {
+        try {
+          const spinner = ora("Reading configuration...").start();
+
+          const configDetails = {
+            path: config.path,
+            values: config.store,
+          };
+
+          spinner.succeed("Configuration loaded");
+
+          console.log("\n" + chalk.blue.bold("Configuration Details:"));
+          console.log(chalk.dim("Path:"), chalk.green(configDetails.path));
+          console.log(chalk.dim("Values:"));
+          console.log(
+            chalk.green(JSON.stringify(configDetails.values, null, 2))
+          );
+        } catch (err) {
+          logger.error(chalk.red("Failed to show configuration:", err));
+          process.exit(1);
+        }
+      })
+  )
+  .addCommand(
+    new Command("cleanup")
+      .alias("clear")
+      .description("Remove all stored configuration")
+      .action(async () => {
+        try {
+          const { confirm } = await inquirer.prompt([
+            {
+              type: "confirm",
+              name: "confirm",
+              message: chalk.yellow(
+                "⚠️  Are you sure you want to remove all stored configuration?"
+              ),
+              default: false,
+            },
+          ]);
+
+          if (confirm) {
+            const spinner = ora("Cleaning up configuration...").start();
+            config.clear();
+            spinner.succeed("Configuration cleared successfully");
+            logger.info(chalk.green("✨ All configuration has been removed"));
+          } else {
+            logger.info(chalk.dim("Cleanup cancelled"));
+          }
+        } catch (err) {
+          logger.error(chalk.red("Failed to cleanup configuration:", err));
+          process.exit(1);
+        }
+      })
+  );
 
 program.parse();
