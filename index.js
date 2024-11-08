@@ -5,7 +5,7 @@ import { ECS } from "@aws-sdk/client-ecs";
 import { fromSSO } from "@aws-sdk/credential-providers";
 import pino from "pino";
 import dotenv from "dotenv";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import chalk from "chalk";
 import figlet from "figlet";
 import { pastel } from "gradient-string";
@@ -14,7 +14,6 @@ import Conf from "conf";
 import fs from "fs";
 import path from "path";
 import os from "os";
-
 dotenv.config();
 
 const config = new Conf({
@@ -315,6 +314,92 @@ async function executeCommand(cluster, taskArn, containerName) {
   });
 }
 
+// Diagnostic functions
+function checkAwsCliInstalled() {
+  try {
+    execSync("aws --version", { stdio: "ignore" });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function checkSessionManagerPluginInstalled() {
+  try {
+    execSync("session-manager-plugin --version", { stdio: "ignore" });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function checkAwsCredentials() {
+  const credentialsPath = path.join(os.homedir(), ".aws", "credentials");
+  const configPath = path.join(os.homedir(), ".aws", "config");
+  return fs.existsSync(credentialsPath) || fs.existsSync(configPath);
+}
+
+function checkAwsProfileConfigured() {
+  const profiles = config.get("awsProfiles");
+  const currentProfile = config.get("awsProfile");
+  if (!profiles.includes(currentProfile)) {
+    return false;
+  }
+  return true;
+}
+
+async function performDiagnostics() {
+  let allGood = true;
+
+  logger.info(chalk.blue.bold("Running Diagnostics..."));
+
+  // Check if AWS CLI is installed
+  if (!checkAwsCliInstalled()) {
+    logger.error(chalk.red("AWS CLI is not installed."));
+    allGood = false;
+  } else {
+    logger.info(chalk.green("AWS CLI is installed."));
+  }
+
+  if (!checkSessionManagerPluginInstalled()) {
+    logger.error(chalk.red("session-manager-plugin is not installed."));
+    allGood = false;
+  } else {
+    logger.info(chalk.green("session-manager-plugin is installed."));
+  }
+
+  // Check if AWS credentials are configured
+  if (!checkAwsCredentials()) {
+    logger.error(chalk.red("AWS credentials are not configured."));
+    allGood = false;
+  } else {
+    logger.info(chalk.green("AWS credentials are configured."));
+  }
+
+  // Check if AWS profile is configured
+  if (!checkAwsProfileConfigured()) {
+    logger.error(
+      chalk.red(`AWS profile '${config.get("awsProfile")}' is not configured.`)
+    );
+    allGood = false;
+  } else {
+    logger.info(
+      chalk.green(`AWS profile '${config.get("awsProfile")}' is configured.`)
+    );
+  }
+
+  // Additional checks can be added here
+
+  if (allGood) {
+    logger.info(
+      chalk.green("All checks passed! Your environment is set up correctly.")
+    );
+  } else {
+    logger.warn(
+      chalk.yellow("Errors were detected. Please address them and try again.")
+    );
+  }
+}
 const program = new Command();
 
 program
@@ -447,5 +532,12 @@ program
         }
       })
   );
+
+program
+  .command("doctor")
+  .description("Run diagnostics to check your environment setup")
+  .action(async () => {
+    await performDiagnostics();
+  });
 
 program.parse();
