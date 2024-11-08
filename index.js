@@ -55,12 +55,14 @@ const AWS_REGIONS = [
 // Fancy banner
 console.log(
   pastel.multiline(
-    figlet.textSync("schematic-ecs-exe", {
+    figlet.textSync("see", {
       font: "ANSI Shadow",
       horizontalLayout: "full",
     })
   )
 );
+
+console.log(chalk.dim("schematic-ecs-exe"));
 
 const logger = pino({
   transport: {
