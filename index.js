@@ -320,6 +320,7 @@ const program = new Command();
 program
   .name(chalk.cyan("see"))
   .description(chalk.yellow("✨ Interactive ECS task executor"))
+  .addHelpText("after", chalk.dim("Example: see "))
   .action(async () => {
     try {
       const ecs = await initAWS();
@@ -341,6 +342,7 @@ program
 
 program
   .command("config")
+  .description("Manage configuration settings")
   .addCommand(
     new Command("set")
       .description("Set AWS profile and region")
