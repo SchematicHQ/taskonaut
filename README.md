@@ -17,9 +17,7 @@ npm install -g .
 
 ```bash
 aws sso login --profile <profile>
-export AWS_PROFILE=schematic-prod
-export AWS_REGION=us-east-1
-see --help
+see config
 see
 ```
 

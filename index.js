@@ -56,13 +56,16 @@ const logger = pino({
 });
 
 const initAWS = async () => {
-  const { AWS_PROFILE = "default", AWS_REGION = "us-east-1" } = process.env;
   try {
+    const profile = config.get("awsProfile");
+    const region = config.get("awsRegion");
+
     logger.info(
-      chalk.dim(`Using AWS Profile: ${AWS_PROFILE} and Region: ${AWS_REGION}`)
+      chalk.dim(`Using AWS Profile: ${profile} and Region: ${region}`)
     );
-    const credentials = await fromSSO({ profile: AWS_PROFILE })();
-    return new ECS({ region: AWS_REGION, credentials });
+
+    const credentials = await fromSSO({ profile })();
+    return new ECS({ region, credentials });
   } catch (err) {
     logger.error(chalk.red("AWS initialization failed:", err));
     process.exit(1);
@@ -192,6 +195,10 @@ async function executeCommand(cluster, taskArn, containerName) {
       [
         "ecs",
         "execute-command",
+        "--profile",
+        config.get("awsProfile"),
+        "--region",
+        config.get("awsRegion"),
         "--cluster",
         cluster,
         "--task",
@@ -252,6 +259,38 @@ program
     } catch (err) {
       logger.error(chalk.red("Failed to execute task:", err));
       process.exit(1);
+    }
+  });
+
+program
+  .command("config")
+  .description("Configure AWS settings")
+  .action(async () => {
+    try {
+      const { profile } = await inquirer.prompt([
+        {
+          type: "input",
+          name: "profile",
+          message: "Enter AWS Profile:",
+          default: config.get("awsProfile"),
+        },
+      ]);
+
+      const { region } = await inquirer.prompt([
+        {
+          type: "input",
+          name: "region",
+          message: "Enter AWS Region:",
+          default: config.get("awsRegion"),
+        },
+      ]);
+
+      config.set("awsProfile", profile);
+      config.set("awsRegion", region);
+
+      logger.info(chalk.green("Configuration saved!"));
+    } catch (err) {
+      logger.error(chalk.red("Failed to save configuration:", err));
     }
   });
 
