@@ -8,11 +8,12 @@
     "see": "./index.js"
   },
   "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write '**/*.{js,json,md}'",
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "build": "chmod +x index.js",
-    "postinstall": "chmod +x index.js && npm run check-deps",
-    "check-deps": "command -v aws >/dev/null 2>&1 || echo 'AWS CLI not found' && command -v session-manager-plugin >/dev/null 2>&1 || echo 'Session Manager Plugin not found'",
+    "postinstall": "chmod +x index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -22,7 +23,7 @@
     "cli"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "@aws-sdk/client-ecs": "^3.687.0",
     "@aws-sdk/credential-providers": "^3.687.0",
@@ -32,9 +33,19 @@
     "dotenv": "^16.4.5",
     "figlet": "^1.8.0",
     "gradient-string": "^3.0.0",
+    "ini": "^5.0.0",
     "inquirer": "^9.3.7",
     "ora": "^8.1.1",
     "pino": "^8.21.0",
     "pino-pretty": "^10.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.14.0",
+    "eslint": "^9.14.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-prettier": "^5.2.1",
+    "globals": "^15.12.0",
+    "prettier": "^3.3.3"
   }
 }

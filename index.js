@@ -1,27 +1,33 @@
 #!/usr/bin/env node
+
+import { ECS } from "@aws-sdk/client-ecs";
+import { fromIni } from "@aws-sdk/credential-providers";
 import { Command } from "commander";
 import inquirer from "inquirer";
-import { ECS } from "@aws-sdk/client-ecs";
-import { fromSSO } from "@aws-sdk/credential-providers";
 import pino from "pino";
 import dotenv from "dotenv";
-import { spawn, execSync } from "child_process";
 import chalk from "chalk";
 import figlet from "figlet";
-import { pastel } from "gradient-string";
 import ora from "ora";
 import Conf from "conf";
+import { pastel } from "gradient-string";
+import { spawn, execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import ini from "ini";
+
 dotenv.config();
 
+/**
+ * Configuration management using Conf
+ */
 const config = new Conf({
   projectName: "see",
   schema: {
     awsProfile: {
       type: "string",
-      default: "schematic-prod",
+      default: "default",
     },
     awsRegion: {
       type: "string",
@@ -57,8 +63,8 @@ console.log(
     figlet.textSync("see", {
       font: "ANSI Shadow",
       horizontalLayout: "full",
-    })
-  )
+    }),
+  ),
 );
 
 console.log(chalk.dim("schematic-ecs-exe"));
@@ -75,31 +81,43 @@ const logger = pino({
   },
 });
 
+const SYNC_INTERVAL = 1000 * 60 * 60; // 1 hour
+
+/**
+ * Parses AWS profiles from credentials and config files
+ * @returns {string[]} Array of AWS profile names
+ */
+function parseAwsProfiles() {
+  const profiles = new Set();
+
+  const credentialsPath = path.join(os.homedir(), ".aws", "credentials");
+  if (fs.existsSync(credentialsPath)) {
+    const content = fs.readFileSync(credentialsPath, "utf-8");
+    const parsed = ini.parse(content);
+    Object.keys(parsed).forEach((profile) => profiles.add(profile));
+  }
+
+  const configPath = path.join(os.homedir(), ".aws", "config");
+  if (fs.existsSync(configPath)) {
+    const content = fs.readFileSync(configPath, "utf-8");
+    const parsed = ini.parse(content);
+    Object.keys(parsed).forEach((profile) => {
+      const profileName = profile.replace("profile ", "");
+      profiles.add(profileName);
+    });
+  }
+
+  return Array.from(profiles);
+}
+
+/**
+ * Synchronizes AWS profiles and updates the configuration
+ * @returns {Promise<string[]>} Array of AWS profile names
+ */
 async function syncAwsProfiles() {
   const spinner = ora("Syncing AWS profiles...").start();
   try {
-    const credentialsPath = path.join(os.homedir(), ".aws", "credentials");
-    const configPath = path.join(os.homedir(), ".aws", "config");
-
-    const profiles = new Set();
-
-    if (fs.existsSync(credentialsPath)) {
-      const content = fs.readFileSync(credentialsPath, "utf-8");
-      content
-        .match(/\[(.*?)\]/g)
-        ?.forEach((profile) => profiles.add(profile.replace(/[\[\]]/g, "")));
-    }
-
-    if (fs.existsSync(configPath)) {
-      const content = fs.readFileSync(configPath, "utf-8");
-      content
-        .match(/\[profile (.*?)\]/g)
-        ?.forEach((profile) =>
-          profiles.add(profile.replace(/\[profile (.*?)\]/, "$1"))
-        );
-    }
-
-    const profilesList = Array.from(profiles);
+    const profilesList = parseAwsProfiles();
     config.set("awsProfiles", profilesList);
     config.set("lastProfileSync", Date.now());
 
@@ -107,14 +125,17 @@ async function syncAwsProfiles() {
     return profilesList;
   } catch (err) {
     spinner.fail("Failed to sync AWS profiles");
-    logger.error(chalk.red("Error syncing profiles:", err));
+    logger.error(err, chalk.red("Error syncing profiles"));
     throw err;
   }
 }
 
+/**
+ * Retrieves AWS profiles from configuration or syncs if necessary
+ * @returns {Promise<string[]>} Array of AWS profile names
+ */
 async function getAwsProfiles() {
   const lastSync = config.get("lastProfileSync");
-  const SYNC_INTERVAL = 1000 * 60 * 60; // 1 hour
 
   if (Date.now() - lastSync > SYNC_INTERVAL) {
     return syncAwsProfiles();
@@ -123,6 +144,10 @@ async function getAwsProfiles() {
   return config.get("awsProfiles");
 }
 
+/**
+ * Initializes the AWS ECS client with the selected profile and region
+ * @returns {Promise<ECS>} An instance of the AWS ECS client
+ */
 const initAWS = async () => {
   try {
     const profiles = await getAwsProfiles();
@@ -130,38 +155,54 @@ const initAWS = async () => {
 
     if (!profiles.includes(currentProfile)) {
       logger.warn(
-        chalk.yellow(`Profile ${currentProfile} not found, please reconfigure`)
+        chalk.yellow(`Profile ${currentProfile} not found, please reconfigure`),
       );
       throw new Error("Invalid AWS profile");
     }
 
     const region = config.get("awsRegion");
     logger.info(
-      chalk.dim(`Using AWS Profile: ${currentProfile} and Region: ${region}`)
+      chalk.dim(`Using AWS Profile: ${currentProfile} and Region: ${region}`),
     );
 
-    const credentials = await fromSSO({ profile: currentProfile })();
+    const credentials = await fromIni({ profile: currentProfile })();
+
     return new ECS({ region, credentials });
   } catch (err) {
-    logger.error(chalk.red("AWS initialization failed:", err));
+    logger.error(chalk.red(err.message));
     process.exit(1);
   }
 };
 
+/**
+ * Lists ECS clusters
+ * @param {ECS} ecs - AWS ECS client
+ * @returns {Promise<string[]>} Array of cluster names
+ */
 async function listClusters(ecs) {
   try {
     const spinner = ora("Fetching clusters...").start();
     const { clusterArns } = await ecs.listClusters({});
     spinner.succeed("Clusters fetched");
+
     return clusterArns.map((arn) => arn.split("/").pop());
   } catch (err) {
-    logger.error(chalk.red("Failed to list clusters:", err));
+    logger.error(chalk.red(err.message));
     throw err;
   }
 }
 
+/**
+ * Prompts user to select an ECS cluster
+ * @param {ECS} ecs - AWS ECS client
+ * @returns {Promise<string>} Selected cluster name
+ */
 async function selectCluster(ecs) {
   const clusters = await listClusters(ecs);
+  if (clusters.length === 0) {
+    logger.warn(chalk.yellow("No clusters found."));
+    process.exit(0);
+  }
   const { cluster } = await inquirer.prompt([
     {
       type: "list",
@@ -177,6 +218,12 @@ async function selectCluster(ecs) {
   return cluster;
 }
 
+/**
+ * Prompts user to select a task within a cluster
+ * @param {ECS} ecs - AWS ECS client
+ * @param {string} cluster - Cluster name
+ * @returns {Promise<string>} Selected task ARN
+ */
 async function selectTask(ecs, cluster) {
   try {
     const spinner = ora("Fetching tasks...").start();
@@ -184,7 +231,8 @@ async function selectTask(ecs, cluster) {
 
     if (!taskArns.length) {
       spinner.fail("No tasks found");
-      throw new Error(chalk.red("No tasks found in cluster"));
+      logger.warn(chalk.yellow("No tasks found in cluster."));
+      process.exit(0);
     }
 
     const { tasks } = await ecs.describeTasks({
@@ -202,7 +250,7 @@ async function selectTask(ecs, cluster) {
         prefix: "📦",
         choices: tasks.map((task) => ({
           name: `${chalk.green(
-            task.taskDefinitionArn.split("/").pop()
+            task.taskDefinitionArn.split("/").pop(),
           )} ${chalk.yellow(`(${task.lastStatus})`)}`,
           value: task.taskArn,
         })),
@@ -210,11 +258,18 @@ async function selectTask(ecs, cluster) {
     ]);
     return taskArn;
   } catch (err) {
-    logger.error(chalk.red("Failed to select task:", err));
+    logger.error(chalk.red(err.message));
     throw err;
   }
 }
 
+/**
+ * Retrieves task details
+ * @param {ECS} ecs - AWS ECS client
+ * @param {string} cluster - Cluster name
+ * @param {string} taskArn - Task ARN
+ * @returns {Promise<object>} Task details
+ */
 async function getTaskDetails(ecs, cluster, taskArn) {
   try {
     const { tasks } = await ecs.describeTasks({
@@ -223,16 +278,23 @@ async function getTaskDetails(ecs, cluster, taskArn) {
     });
 
     if (!tasks || tasks.length === 0) {
-      throw new Error(chalk.red("Task not found"));
+      throw new Error("Task not found");
     }
 
     return tasks[0];
   } catch (err) {
-    logger.error(chalk.red("Failed to get task details:", err));
+    logger.error(chalk.red(err.message));
     throw err;
   }
 }
 
+/**
+ * Prompts user to select a container within a task
+ * @param {ECS} ecs - AWS ECS client
+ * @param {string} cluster - Cluster name
+ * @param {string} taskArn - Task ARN
+ * @returns {Promise<string>} Selected container name
+ */
 async function selectContainer(ecs, cluster, taskArn) {
   const spinner = ora("Fetching container details...").start();
   const task = await getTaskDetails(ecs, cluster, taskArn);
@@ -252,7 +314,7 @@ async function selectContainer(ecs, cluster, taskArn) {
       prefix: "🐳",
       choices: containers.map((container) => ({
         name: `${chalk.green(container.name)} ${chalk.yellow(
-          `(${container.lastStatus})`
+          `(${container.lastStatus})`,
         )}`,
         value: container.name,
       })),
@@ -262,11 +324,18 @@ async function selectContainer(ecs, cluster, taskArn) {
   return containerName;
 }
 
+/**
+ * Executes a command on the selected container
+ * @param {string} cluster - Cluster name
+ * @param {string} taskArn - Task ARN
+ * @param {string} containerName - Container name
+ * @returns {Promise<number>} Exit code
+ */
 async function executeCommand(cluster, taskArn, containerName) {
   return new Promise((resolve, reject) => {
     logger.info(chalk.dim("Starting shell session..."));
 
-    const process = spawn(
+    const childProcess = spawn(
       "aws",
       [
         "ecs",
@@ -287,27 +356,27 @@ async function executeCommand(cluster, taskArn, containerName) {
       ],
       {
         stdio: "inherit",
-      }
+      },
     );
 
     const cleanup = () => {
       logger.info(chalk.yellow("📤 Cleaning up ECS session..."));
-      process.kill("SIGTERM");
+      childProcess.kill("SIGTERM");
     };
 
     ["SIGINT", "SIGTERM", "SIGQUIT"].forEach((signal) => {
       process.on(signal, cleanup);
     });
 
-    process.on("error", (err) => {
-      logger.error(chalk.red("Process error:", err));
+    childProcess.on("error", (err) => {
+      logger.error(chalk.red(err.message));
       cleanup();
       reject(err);
     });
 
-    process.on("exit", (code) => {
+    childProcess.on("exit", (code) => {
       logger.info(
-        chalk.green(`✨ Session ended with exit code ${chalk.bold(code)}`)
+        chalk.green(`✨ Session ended with exit code ${chalk.bold(code)}`),
       );
       resolve(code);
     });
@@ -315,30 +384,49 @@ async function executeCommand(cluster, taskArn, containerName) {
 }
 
 // Diagnostic functions
+
+/**
+ * Checks if AWS CLI is installed
+ * @returns {boolean} True if installed, false otherwise
+ */
 function checkAwsCliInstalled() {
   try {
     execSync("aws --version", { stdio: "ignore" });
     return true;
-  } catch (error) {
+  } catch (err) {
+    logger.error(chalk.red(err.message));
     return false;
   }
 }
 
+/**
+ * Checks if Session Manager Plugin is installed
+ * @returns {boolean} True if installed, false otherwise
+ */
 function checkSessionManagerPluginInstalled() {
   try {
     execSync("session-manager-plugin --version", { stdio: "ignore" });
     return true;
-  } catch (error) {
+  } catch (err) {
+    logger.error(chalk.red(err.message));
     return false;
   }
 }
 
+/**
+ * Checks if AWS credentials are configured
+ * @returns {boolean} True if configured, false otherwise
+ */
 function checkAwsCredentials() {
   const credentialsPath = path.join(os.homedir(), ".aws", "credentials");
   const configPath = path.join(os.homedir(), ".aws", "config");
   return fs.existsSync(credentialsPath) || fs.existsSync(configPath);
 }
 
+/**
+ * Checks if the configured AWS profile is valid
+ * @returns {boolean} True if valid, false otherwise
+ */
 function checkAwsProfileConfigured() {
   const profiles = config.get("awsProfiles");
   const currentProfile = config.get("awsProfile");
@@ -348,6 +436,9 @@ function checkAwsProfileConfigured() {
   return true;
 }
 
+/**
+ * Performs diagnostics to check environment setup
+ */
 async function performDiagnostics() {
   let allGood = true;
 
@@ -361,11 +452,12 @@ async function performDiagnostics() {
     logger.info(chalk.green("✅ AWS CLI is installed."));
   }
 
+  // Check if Session Manager Plugin is installed
   if (!checkSessionManagerPluginInstalled()) {
-    logger.error(chalk.red("❌ session-manager-plugin is not installed."));
+    logger.error(chalk.red("❌ Session Manager Plugin is not installed."));
     allGood = false;
   } else {
-    logger.info(chalk.green("✅ session-manager-plugin is installed."));
+    logger.info(chalk.green("✅ Session Manager Plugin is installed."));
   }
 
   // Check if AWS credentials are configured
@@ -380,13 +472,15 @@ async function performDiagnostics() {
   if (!checkAwsProfileConfigured()) {
     logger.error(
       chalk.red(
-        `❌ AWS profile '${config.get("awsProfile")}' is not configured.`
-      )
+        `❌ AWS profile '${config.get("awsProfile")}' is not configured.`,
+      ),
     );
     allGood = false;
   } else {
     logger.info(
-      chalk.green(`✅ AWS profile '${config.get("awsProfile")}' is configured.`)
+      chalk.green(
+        `✅ AWS profile '${config.get("awsProfile")}' is configured.`,
+      ),
     );
   }
 
@@ -394,16 +488,20 @@ async function performDiagnostics() {
 
   if (allGood) {
     logger.info(
-      chalk.green("💯 All checks passed! Your environment is set up correctly.")
+      chalk.green(
+        "💯 All checks passed! Your environment is set up correctly.",
+      ),
     );
   } else {
     logger.warn(
       chalk.yellow(
-        "😭 Errors were detected. Please address them and try again."
-      )
+        "😭 Errors were detected. Please address them and try again.",
+      ),
     );
   }
 }
+
+// CLI Program setup using Commander
 const program = new Command();
 
 program
@@ -419,12 +517,12 @@ program
 
       logger.info(
         chalk.green(
-          `🚀 Connecting to container ${chalk.bold(containerName)}...`
-        )
+          `🚀 Connecting to container ${chalk.bold(containerName)}...`,
+        ),
       );
       await executeCommand(cluster, taskArn, containerName);
     } catch (err) {
-      logger.error(chalk.red("Failed to execute task:", err));
+      logger.error(chalk.red(err.message));
       process.exit(1);
     }
   });
@@ -473,10 +571,10 @@ program
 
           logger.info(chalk.green("✨ Configuration saved successfully!"));
         } catch (err) {
-          logger.error(chalk.red("Failed to configure:", err));
+          logger.error(chalk.red(err.message));
           process.exit(1);
         }
-      })
+      }),
   )
   .addCommand(
     new Command("show")
@@ -497,13 +595,13 @@ program
           console.log(chalk.dim("Path:"), chalk.green(configDetails.path));
           console.log(chalk.dim("Values:"));
           console.log(
-            chalk.green(JSON.stringify(configDetails.values, null, 2))
+            chalk.green(JSON.stringify(configDetails.values, null, 2)),
           );
         } catch (err) {
-          logger.error(chalk.red("Failed to show configuration:", err));
+          logger.error(chalk.red(err.message));
           process.exit(1);
         }
-      })
+      }),
   )
   .addCommand(
     new Command("cleanup")
@@ -516,7 +614,7 @@ program
               type: "confirm",
               name: "confirm",
               message: chalk.yellow(
-                "⚠️  Are you sure you want to remove all stored configuration?"
+                "⚠️  Are you sure you want to remove all stored configuration?",
               ),
               default: false,
             },
@@ -526,15 +624,14 @@ program
             const spinner = ora("Cleaning up configuration...").start();
             config.clear();
             spinner.succeed("Configuration cleared successfully");
-            logger.info(chalk.green("✨ All configuration has been removed"));
           } else {
             logger.info(chalk.dim("Cleanup cancelled"));
           }
         } catch (err) {
-          logger.error(chalk.red("Failed to cleanup configuration:", err));
+          logger.error(chalk.red(err.message));
           process.exit(1);
         }
-      })
+      }),
   );
 
 program
