@@ -351,40 +351,42 @@ function checkAwsProfileConfigured() {
 async function performDiagnostics() {
   let allGood = true;
 
-  logger.info(chalk.blue.bold("Running Diagnostics..."));
+  logger.info(chalk.blue.bold("🏃 Running Diagnostics..."));
 
   // Check if AWS CLI is installed
   if (!checkAwsCliInstalled()) {
-    logger.error(chalk.red("AWS CLI is not installed."));
+    logger.error(chalk.red("❌ AWS CLI is not installed."));
     allGood = false;
   } else {
-    logger.info(chalk.green("AWS CLI is installed."));
+    logger.info(chalk.green("✅ AWS CLI is installed."));
   }
 
   if (!checkSessionManagerPluginInstalled()) {
-    logger.error(chalk.red("session-manager-plugin is not installed."));
+    logger.error(chalk.red("❌ session-manager-plugin is not installed."));
     allGood = false;
   } else {
-    logger.info(chalk.green("session-manager-plugin is installed."));
+    logger.info(chalk.green("✅ session-manager-plugin is installed."));
   }
 
   // Check if AWS credentials are configured
   if (!checkAwsCredentials()) {
-    logger.error(chalk.red("AWS credentials are not configured."));
+    logger.error(chalk.red("❌ AWS credentials are not configured."));
     allGood = false;
   } else {
-    logger.info(chalk.green("AWS credentials are configured."));
+    logger.info(chalk.green("✅ AWS credentials are configured."));
   }
 
   // Check if AWS profile is configured
   if (!checkAwsProfileConfigured()) {
     logger.error(
-      chalk.red(`AWS profile '${config.get("awsProfile")}' is not configured.`)
+      chalk.red(
+        `❌ AWS profile '${config.get("awsProfile")}' is not configured.`
+      )
     );
     allGood = false;
   } else {
     logger.info(
-      chalk.green(`AWS profile '${config.get("awsProfile")}' is configured.`)
+      chalk.green(`✅ AWS profile '${config.get("awsProfile")}' is configured.`)
     );
   }
 
@@ -392,11 +394,13 @@ async function performDiagnostics() {
 
   if (allGood) {
     logger.info(
-      chalk.green("All checks passed! Your environment is set up correctly.")
+      chalk.green("💯 All checks passed! Your environment is set up correctly.")
     );
   } else {
     logger.warn(
-      chalk.yellow("Errors were detected. Please address them and try again.")
+      chalk.yellow(
+        "😭 Errors were detected. Please address them and try again."
+      )
     );
   }
 }
