@@ -63,8 +63,8 @@ console.log(
     figlet.textSync("see", {
       font: "ANSI Shadow",
       horizontalLayout: "full",
-    }),
-  ),
+    })
+  )
 );
 
 console.log(chalk.dim("schematic-ecs-exe"));
@@ -126,7 +126,6 @@ async function syncAwsProfiles() {
   } catch (err) {
     spinner.fail("Failed to sync AWS profiles");
     logger.error(err, chalk.red("Error syncing profiles"));
-    throw err;
   }
 }
 
@@ -155,14 +154,14 @@ const initAWS = async () => {
 
     if (!profiles.includes(currentProfile)) {
       logger.warn(
-        chalk.yellow(`Profile ${currentProfile} not found, please reconfigure`),
+        chalk.yellow(`Profile ${currentProfile} not found, please reconfigure`)
       );
       throw new Error("Invalid AWS profile");
     }
 
     const region = config.get("awsRegion");
     logger.info(
-      chalk.dim(`Using AWS Profile: ${currentProfile} and Region: ${region}`),
+      chalk.dim(`Using AWS Profile: ${currentProfile} and Region: ${region}`)
     );
 
     const credentials = await fromIni({ profile: currentProfile })();
@@ -188,7 +187,6 @@ async function listClusters(ecs) {
     return clusterArns.map((arn) => arn.split("/").pop());
   } catch (err) {
     logger.error(chalk.red(err.message));
-    throw err;
   }
 }
 
@@ -250,7 +248,7 @@ async function selectTask(ecs, cluster) {
         prefix: "📦",
         choices: tasks.map((task) => ({
           name: `${chalk.green(
-            task.taskDefinitionArn.split("/").pop(),
+            task.taskDefinitionArn.split("/").pop()
           )} ${chalk.yellow(`(${task.lastStatus})`)}`,
           value: task.taskArn,
         })),
@@ -259,7 +257,6 @@ async function selectTask(ecs, cluster) {
     return taskArn;
   } catch (err) {
     logger.error(chalk.red(err.message));
-    throw err;
   }
 }
 
@@ -284,7 +281,6 @@ async function getTaskDetails(ecs, cluster, taskArn) {
     return tasks[0];
   } catch (err) {
     logger.error(chalk.red(err.message));
-    throw err;
   }
 }
 
@@ -314,7 +310,7 @@ async function selectContainer(ecs, cluster, taskArn) {
       prefix: "🐳",
       choices: containers.map((container) => ({
         name: `${chalk.green(container.name)} ${chalk.yellow(
-          `(${container.lastStatus})`,
+          `(${container.lastStatus})`
         )}`,
         value: container.name,
       })),
@@ -356,7 +352,7 @@ async function executeCommand(cluster, taskArn, containerName) {
       ],
       {
         stdio: "inherit",
-      },
+      }
     );
 
     const cleanup = () => {
@@ -376,7 +372,7 @@ async function executeCommand(cluster, taskArn, containerName) {
 
     childProcess.on("exit", (code) => {
       logger.info(
-        chalk.green(`✨ Session ended with exit code ${chalk.bold(code)}`),
+        chalk.green(`✨ Session ended with exit code ${chalk.bold(code)}`)
       );
       resolve(code);
     });
@@ -472,15 +468,13 @@ async function performDiagnostics() {
   if (!checkAwsProfileConfigured()) {
     logger.error(
       chalk.red(
-        `❌ AWS profile '${config.get("awsProfile")}' is not configured.`,
-      ),
+        `❌ AWS profile '${config.get("awsProfile")}' is not configured.`
+      )
     );
     allGood = false;
   } else {
     logger.info(
-      chalk.green(
-        `✅ AWS profile '${config.get("awsProfile")}' is configured.`,
-      ),
+      chalk.green(`✅ AWS profile '${config.get("awsProfile")}' is configured.`)
     );
   }
 
@@ -488,15 +482,13 @@ async function performDiagnostics() {
 
   if (allGood) {
     logger.info(
-      chalk.green(
-        "💯 All checks passed! Your environment is set up correctly.",
-      ),
+      chalk.green("💯 All checks passed! Your environment is set up correctly.")
     );
   } else {
     logger.warn(
       chalk.yellow(
-        "😭 Errors were detected. Please address them and try again.",
-      ),
+        "😭 Errors were detected. Please address them and try again."
+      )
     );
   }
 }
@@ -517,8 +509,8 @@ program
 
       logger.info(
         chalk.green(
-          `🚀 Connecting to container ${chalk.bold(containerName)}...`,
-        ),
+          `🚀 Connecting to container ${chalk.bold(containerName)}...`
+        )
       );
       await executeCommand(cluster, taskArn, containerName);
     } catch (err) {
@@ -574,7 +566,7 @@ program
           logger.error(chalk.red(err.message));
           process.exit(1);
         }
-      }),
+      })
   )
   .addCommand(
     new Command("show")
@@ -595,13 +587,13 @@ program
           console.log(chalk.dim("Path:"), chalk.green(configDetails.path));
           console.log(chalk.dim("Values:"));
           console.log(
-            chalk.green(JSON.stringify(configDetails.values, null, 2)),
+            chalk.green(JSON.stringify(configDetails.values, null, 2))
           );
         } catch (err) {
           logger.error(chalk.red(err.message));
           process.exit(1);
         }
-      }),
+      })
   )
   .addCommand(
     new Command("cleanup")
@@ -614,7 +606,7 @@ program
               type: "confirm",
               name: "confirm",
               message: chalk.yellow(
-                "⚠️  Are you sure you want to remove all stored configuration?",
+                "⚠️  Are you sure you want to remove all stored configuration?"
               ),
               default: false,
             },
@@ -631,7 +623,7 @@ program
           logger.error(chalk.red(err.message));
           process.exit(1);
         }
-      }),
+      })
   );
 
 program
