@@ -2,6 +2,8 @@
 
 Interactive CLI tool for exec into AWS ECS tasks (containers)
 
+> We followed [Command Line Interface Guidelines](https://clig.dev/), An open-source guide to help you write better command-line programs, taking traditional UNIX principles and updating them for the modern day.
+
 ## Features
 
 - 🔐 AWS SSO authentication support
