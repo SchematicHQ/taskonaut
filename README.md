@@ -82,43 +82,50 @@ Configuration is stored in:
 - Linux: `~/.config/see-nodejs`
 - Windows:` %APPDATA%\see-nodejs`
 
-## Troubleshooting
+## Troubleshooting (macOS)
 
-- AWS CLI not found
+> [!CAUTION]
+> Error messages:
+
+- `Task not found`: Ensure the ECS task is running
+- `Container not found`: Task may have zero containers
+- `Invalid AWS profile`: Configure AWS profile first
+- `No clusters found`: Ensure you have access to ECS clusters in the selected AWS region.
+- `AWS CLI is not installed`: Install AWS CLI v2.
+- `Session Manager Plugin is not installed`: Install the Session Manager Plugin.
+- `AWS initialization failed`: Check your AWS credentials and network connectivity.
+
+---
+
+- `AWS CLI not found`
 
 ```bash
 brew install awscli
 
 ```
 
-- Session Manager Plugin not found
+- `Session Manager Plugin not found`
 
 ```bash
 brew install session-manager-plugin
 ```
 
-- Invalid AWS profile
+- `Invalid AWS profile`
   Ensure your AWS profile is configured correctly. If using AWS SSO, log in with:
 
 ```bash
 aws sso login --profile your-profile
 ```
 
-- AWS Credentials not configured
+- `AWS Credentials not configured`
+  
   Configure your AWS credentials by setting up your `~/.aws/credentials` and `~/.aws/config` files. You can use aws configure to set up access keys, or set up AWS SSO profiles.
 
-- No clusters found
+- `No clusters found`
+  
   Ensure you have access to ECS clusters in the selected AWS region and that your AWS credentials have the necessary permissions.
 
-## Error Messages
 
-- `Task not found`: Ensure the ECS task is running
-- `Container not found`: Task may have multiple containers
-- `Invalid AWS profile`: Configure AWS profile first
-- `No clusters found`: Ensure you have access to ECS clusters in the selected AWS region.
-- `AWS CLI is not installed`: Install AWS CLI v2.
-- `Session Manager Plugin is not installed`: Install the Session Manager Plugin.
-- `AWS initialization failed`: Check your AWS credentials and network connectivity.
 
 ## License
 
