@@ -1,0 +1,10 @@
+.git/
+.github/
+.vscode/
+node_modules/
+.env
+.env.*
+.eslintrc*
+.prettierrc*
+.gitignore
+*.log 
