@@ -1,11 +1,11 @@
 {
-  "name": "see",
+  "name": "taskonaut",
   "type": "module",
   "version": "1.0.0",
-  "description": "schematic-ecs-exec - Run AWS ECS exec commands",
+  "description": "Interactive CLI tool for exec into AWS ECS tasks (containers) - from [SchematicHQ](https://schematichq.com)",
   "main": "index.js",
   "bin": {
-    "see": "./index.js"
+    "taskonaut": "./index.js"
   },
   "scripts": {
     "lint": "eslint .",
@@ -20,7 +20,8 @@
     "aws",
     "ecs",
     "exec",
-    "cli"
+    "cli",
+    "task"
   ],
   "author": "",
   "license": "MIT",

@@ -1,4 +1,4 @@
-# schematic-ecs-exec (see)
+# taskonaut
 
 ```bash
 
@@ -10,7 +10,9 @@
 ╚═════╝░░╚════╝░╚═╝░░╚═╝╚══════╝╚═╝░░░░░╚═╝╚═╝░░╚═╝░░░╚═╝░░░╚═╝░╚════╝░
 ```
 
-Interactive CLI tool for exec into AWS ECS tasks (containers)
+Interactive CLI tool for exec into AWS ECS tasks (containers) - from [SchematicHQ](https://schematichq.com)
+
+> `taskonaut` is a combination of "Task" (ECS tasks) and "Astronaut"
 
 > We followed [Command Line Interface Guidelines](https://clig.dev/), An open-source guide to help you write better command-line programs, taking traditional UNIX principles and updating them for the modern day.
 
@@ -37,32 +39,32 @@ Interactive CLI tool for exec into AWS ECS tasks (containers)
 ## Installation
 
 ```bash
-npm install -g see
+npm install -g taskonaut
 ```
 
 ## Usage
 
 ```bash
 # Configure AWS profile and region
-see config set
+taskonaut config set
 
 # Show current configuration
-see config show
+taskonaut config show
 
 # Clear configuration
-see config cleanup
+taskonaut config cleanup
 
 # Run diagnostics to check environment setup
-see doctor
+taskonaut doctor
 
 # Start interactive session
-see
+taskonaut
 ```
 
 ## Command Line Options
 
 ```bash
-Usage: see [options] [command]
+Usage: taskonaut [options] [command]
 
 ✨ Interactive ECS task executor
 
@@ -78,9 +80,9 @@ Commands:
 
 Configuration is stored in:
 
-- macOS: `~/Users/$USER/Library/Preferences/see-nodejs`
-- Linux: `~/.config/see-nodejs`
-- Windows:` %APPDATA%\see-nodejs`
+- macOS: `~/Users/$USER/Library/Preferences/taskonaut-nodejs`
+- Linux: `~/.config/taskonaut-nodejs`
+- Windows:` %APPDATA%\taskonaut-nodejs`
 
 ## Troubleshooting (macOS)
 

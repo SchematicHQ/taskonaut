@@ -23,7 +23,7 @@ dotenv.config();
  * Configuration management using Conf
  */
 const config = new Conf({
-  projectName: "see",
+  projectName: "taskonaut",
   schema: {
     awsProfile: {
       type: "string",
@@ -60,14 +60,14 @@ const AWS_REGIONS = [
 // Fancy banner
 console.log(
   pastel.multiline(
-    figlet.textSync("see", {
+    figlet.textSync("taskonaut", {
       font: "ANSI Shadow",
       horizontalLayout: "full",
     })
   )
 );
 
-console.log(chalk.dim("schematic-ecs-exe"));
+console.log(chalk.dim("taskonaut"));
 
 const logger = pino({
   transport: {
@@ -497,9 +497,9 @@ async function performDiagnostics() {
 const program = new Command();
 
 program
-  .name(chalk.cyan("see"))
+  .name(chalk.cyan("taskonaut"))
   .description(chalk.yellow("✨ Interactive ECS task executor"))
-  .addHelpText("after", chalk.dim("Example: see "))
+  .addHelpText("after", chalk.dim("Example: taskonaut "))
   .action(async () => {
     try {
       const ecs = await initAWS();
@@ -525,7 +525,7 @@ program
   .addCommand(
     new Command("set")
       .description("Set AWS profile and region")
-      .addHelpText("after", chalk.dim("Example: see config set"))
+      .addHelpText("after", chalk.dim("Example: taskonaut config set"))
       .action(async () => {
         try {
           const spinner = ora("Loading AWS profiles...").start();
