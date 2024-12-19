@@ -57,6 +57,8 @@ const AWS_REGIONS = [
   "eu-west-2",
 ];
 
+const SYNC_INTERVAL = 1000 * 60 * 60; // 1 hour
+
 // Fancy banner
 console.log(
   pastel.multiline(
@@ -80,8 +82,6 @@ const logger = pino({
     },
   },
 });
-
-const SYNC_INTERVAL = 1000 * 60 * 60; // 1 hour
 
 /**
  * Parses AWS profiles from credentials and config files
