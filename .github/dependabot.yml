@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directories:
+      - "/"
+    schedule:
+      interval: "daily"
+    labels:
+      - "npm"
+      - "Dependabot"
+    reviewers:
+      - "mhmdio"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    labels:
+      - "github-actions"
+      - "Dependabot"
+    reviewers:
+      - "mhmdio"

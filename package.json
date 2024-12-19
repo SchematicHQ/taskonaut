@@ -1,7 +1,7 @@
 {
-  "name": "taskonaut",
+  "name": "@schematichq/taskonaut",
   "type": "module",
-  "version": "1.0.0",
+  "version": "0.0.1-development",
   "description": "Interactive CLI tool for exec into AWS ECS tasks (containers) - from [SchematicHQ](https://schematichq.com)",
   "main": "index.js",
   "bin": {
@@ -13,6 +13,7 @@
     "format": "prettier --write '**/*.{js,json,md}'",
     "start": "node index.js",
     "dev": "node --watch index.js",
+    "semantic-release": "semantic-release",
     "postinstall": "chmod +x index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -34,6 +35,22 @@
   ],
   "author": "SchematicHQ",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "release": {
+    "branches": [
+      "main",
+      {
+        "name": "next",
+        "prerelease": true
+      }
+    ]
+  },
   "bugs": {
     "url": "https://github.com/SchematicHQ/taskonaut/issues"
   },
@@ -63,6 +80,7 @@
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-prettier": "^5.2.1",
     "globals": "^15.14.0",
-    "prettier": "^3.4.2"
+    "prettier": "^3.4.2",
+    "semantic-release": "^24.2.0"
   }
 }
