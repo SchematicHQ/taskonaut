@@ -39,7 +39,7 @@ Interactive CLI tool for exec into AWS ECS tasks (containers) - from [SchematicH
 ## Installation
 
 ```bash
-npm install -g taskonaut
+npm install -g @schematichq/taskonaut
 ```
 
 ## Usage
