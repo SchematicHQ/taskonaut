@@ -13,7 +13,6 @@
 Interactive CLI tool for exec into AWS ECS tasks (containers) - from [SchematicHQ](https://schematichq.com)
 
 > `taskonaut` is a combination of "Task" (ECS tasks) and "Astronaut"
-
 > We followed [Command Line Interface Guidelines](https://clig.dev/), An open-source guide to help you write better command-line programs, taking traditional UNIX principles and updating them for the modern day.
 
 ## Features
@@ -82,7 +81,7 @@ Configuration is stored in:
 
 - macOS: `~/Users/$USER/Library/Preferences/taskonaut-nodejs`
 - Linux: `~/.config/taskonaut-nodejs`
-- Windows:` %APPDATA%\taskonaut-nodejs`
+- Windows:`%APPDATA%\taskonaut-nodejs`
 
 ## Troubleshooting (macOS)
 
@@ -126,8 +125,6 @@ aws sso login --profile your-profile
 - `No clusters found`
   
   Ensure you have access to ECS clusters in the selected AWS region and that your AWS credentials have the necessary permissions.
-
-
 
 ## License
 

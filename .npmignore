@@ -7,4 +7,12 @@ node_modules/
 .eslintrc*
 .prettierrc*
 .gitignore
+eslint.config.js
+tests/
+jest.config.js
+SECURITY.md
+CODE_OF_CONDUCT.md
+CHANGELOG.md
+CONTRIBUTING.md
+LICENSE
 *.log 

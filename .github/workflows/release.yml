@@ -22,6 +22,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run format
+      - run: npm test
       - run: npm audit signature
       - name: Release
         env:
