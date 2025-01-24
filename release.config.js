@@ -1,7 +1,8 @@
-/**
- * @type {import('semantic-release').GlobalConfig}
- */
-module.exports = {
+// @ts-check
+/** @type {import('semantic-release').GlobalConfig} */
+const config = {
+  repositoryUrl: "https://github.com/schematichq/taskonaut",
+  tagFormat: "v${version}",
   branches: [
     "main",
     {
@@ -28,3 +29,5 @@ module.exports = {
     "@semantic-release/npm",
   ],
 };
+
+module.exports = config;
