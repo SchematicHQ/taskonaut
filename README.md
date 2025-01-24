@@ -133,3 +133,19 @@ MIT
 ## Contributing
 
 Pull requests welcome! Please read `CONTRIBUTING.md` for details.
+
+## Dependabot
+
+We use [Dependabot](https://dependabot.com/) to keep our dependencies up to date.
+
+## Semantic Release
+
+We use [Semantic Release](https://semantic-release.gitbook.io/semantic-release/) to automate the release process.
+
+## GitHub Actions
+
+We use [GitHub Actions](https://github.com/features/actions) to run our tests and build our project.
+
+## ToDo
+
+- [ ] Add support for `aws-vault`
