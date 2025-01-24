@@ -10,6 +10,8 @@
 ╚═════╝░░╚════╝░╚═╝░░╚═╝╚══════╝╚═╝░░░░░╚═╝╚═╝░░╚═╝░░░╚═╝░░░╚═╝░╚════╝░
 ```
 
+![taskonaut](./.github/docs/screenshot.png)
+
 Interactive CLI tool for exec into AWS ECS tasks (containers) - from [SchematicHQ](https://schematichq.com)
 
 > `taskonaut` is a combination of "Task" (ECS tasks) and "Astronaut"
