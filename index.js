@@ -49,8 +49,6 @@ const config = new Conf({
   },
 });
 
-
-
 const SYNC_INTERVAL = 1000 * 60 * 60; // 1 hour
 
 // Fancy banner
@@ -168,9 +166,9 @@ const initAWS = async () => {
 };
 
 /**
- * Lists ECS clusters
+ * Lists ECS clusters along with their service, task, and container instance counts
  * @param {ECS} ecs - AWS ECS client
- * @returns {Promise<string[]>} Array of cluster names
+ * @returns {Promise<Array<{clusterName: string, servicesCount: number, tasksCount: number, containerInstancesCount: number}>>} Clusters with details
  */
 async function listClusters(ecs) {
   try {
@@ -178,20 +176,83 @@ async function listClusters(ecs) {
     const { clusterArns } = await ecs.listClusters({});
     spinner.succeed("Clusters fetched");
 
-    return clusterArns.map((arn) => arn.split("/").pop());
+    const clusters = await Promise.all(
+      clusterArns.map(async (arn) => {
+        const clusterName = arn.split("/").pop();
+
+        let servicesCount = 0;
+        let tasksCount = 0;
+        let containerInstancesCount = 0;
+
+        // Fetch services count
+        try {
+          const servicesResult = await ecs.listServices({
+            cluster: clusterName,
+          });
+          servicesCount = servicesResult.serviceArns
+            ? servicesResult.serviceArns.length
+            : 0;
+        } catch (err) {
+          logger.error(
+            chalk.red(
+              `Error fetching services for cluster ${clusterName}: ${err.message}`
+            )
+          );
+        }
+
+        // Fetch tasks count
+        try {
+          const tasksResult = await ecs.listTasks({ cluster: clusterName });
+          tasksCount = tasksResult.taskArns ? tasksResult.taskArns.length : 0;
+        } catch (err) {
+          logger.error(
+            chalk.red(
+              `Error fetching tasks for cluster ${clusterName}: ${err.message}`
+            )
+          );
+        }
+
+        // Fetch container instances count
+        try {
+          const containerInstancesResult = await ecs.listContainerInstances({
+            cluster: clusterName,
+          });
+          containerInstancesCount =
+            containerInstancesResult.containerInstanceArns
+              ? containerInstancesResult.containerInstanceArns.length
+              : 0;
+        } catch (err) {
+          logger.error(
+            chalk.red(
+              `Error fetching container instances for cluster ${clusterName}: ${err.message}`
+            )
+          );
+        }
+
+        return {
+          clusterName,
+          servicesCount,
+          tasksCount,
+          containerInstancesCount,
+        };
+      })
+    );
+
+    return clusters;
   } catch (err) {
     logger.error(chalk.red(err.message));
   }
 }
 
 /**
- * Prompts user to select an ECS cluster
+ * Prompts user to select an ECS cluster,
+ * now displaying the number of services, tasks, and container instances.
  * @param {ECS} ecs - AWS ECS client
  * @returns {Promise<string>} Selected cluster name
  */
 async function selectCluster(ecs) {
   const clusters = await listClusters(ecs);
-  if (clusters.length === 0) {
+  if (!clusters || clusters.length === 0) {
     logger.warn(chalk.yellow("No clusters found."));
     process.exit(0);
   }
@@ -202,8 +263,12 @@ async function selectCluster(ecs) {
       message: chalk.blue("Select ECS cluster:"),
       prefix: "🚀",
       choices: clusters.map((c) => ({
-        name: chalk.green(c),
-        value: c,
+        name:
+          chalk.green(c.clusterName) +
+          chalk.yellow(
+            ` (Services: ${c.servicesCount}, Tasks: ${c.tasksCount}, Container Instances: ${c.containerInstancesCount})`
+          ),
+        value: c.clusterName,
       })),
     },
   ]);
@@ -211,12 +276,13 @@ async function selectCluster(ecs) {
 }
 
 /**
- * Prompts user to select a task within a cluster
+ * Prompts user to select a task within a cluster, optionally allowing going back.
  * @param {ECS} ecs - AWS ECS client
  * @param {string} cluster - Cluster name
- * @returns {Promise<string>} Selected task ARN
+ * @param {boolean} allowBack - Whether to allow going back (adds a "← Go Back" option)
+ * @returns {Promise<string>} Selected task ARN or '__BACK__'
  */
-async function selectTask(ecs, cluster) {
+async function selectTask(ecs, cluster, allowBack = false) {
   try {
     const spinner = ora("Fetching tasks...").start();
     const { taskArns } = await ecs.listTasks({ cluster });
@@ -234,23 +300,56 @@ async function selectTask(ecs, cluster) {
 
     spinner.succeed("Tasks fetched");
 
+    // Sort the tasks alphabetically by the task definition name.
+    tasks.sort((a, b) => {
+      const aName = (a.taskDefinitionArn.split("/").pop() || "").toLowerCase();
+      const bName = (b.taskDefinitionArn.split("/").pop() || "").toLowerCase();
+      return aName.localeCompare(bName);
+    });
+
+    // Build choices array
+    const choices = tasks.map((task) => {
+      // Extract the task definition name
+      const taskDefName = task.taskDefinitionArn.split("/").pop();
+      // Extract the task ID from the task ARN and get its last 6 characters
+      const taskId = task.taskArn.split("/").pop();
+      const shortTaskId = taskId.slice(-6);
+      // Format the task started at time if available
+      const startedAt = task.startedAt
+        ? new Date(task.startedAt).toLocaleString()
+        : "N/A";
+      return {
+        name: `${chalk.green(taskDefName)} ${chalk.yellow(
+          `(ID: ${shortTaskId}, ${task.lastStatus}, started at: ${startedAt})`
+        )}`,
+        value: task.taskArn,
+      };
+    });
+
+    // Add the "Go Back" option if allowed
+    if (allowBack) {
+      choices.unshift({
+        name: chalk.blue("← Go Back"),
+        value: "__BACK__",
+      });
+    }
+
     const { taskArn } = await inquirer.prompt([
       {
         type: "list",
         name: "taskArn",
         message: chalk.blue("Select task:"),
         prefix: "📦",
-        choices: tasks.map((task) => ({
-          name: `${chalk.green(
-            task.taskDefinitionArn.split("/").pop()
-          )} ${chalk.yellow(`(${task.lastStatus})`)}`,
-          value: task.taskArn,
-        })),
+        choices,
+        loop: false,
+        pageSize: choices.length,
       },
     ]);
+
     return taskArn;
   } catch (err) {
     logger.error(chalk.red(err.message));
+    process.exit(1);
   }
 }
 
@@ -279,21 +378,42 @@ async function getTaskDetails(ecs, cluster, taskArn) {
 }
 
 /**
- * Prompts user to select a container within a task
+ * Prompts user to select a container within a task, optionally allowing to go back.
  * @param {ECS} ecs - AWS ECS client
  * @param {string} cluster - Cluster name
  * @param {string} taskArn - Task ARN
- * @returns {Promise<string>} Selected container name
+ * @param {boolean} allowBack - Whether to allow going back (adds a "← Go Back" option)
+ * @returns {Promise<string>} Selected container name or '__BACK__'
  */
-async function selectContainer(ecs, cluster, taskArn) {
+async function selectContainer(ecs, cluster, taskArn, allowBack = false) {
   const spinner = ora("Fetching container details...").start();
   const task = await getTaskDetails(ecs, cluster, taskArn);
   const containers = task.containers;
   spinner.succeed("Container details fetched");
 
-  if (containers.length === 1) {
+  let choices = [];
+
+  // If only one container and back navigation is not requested, auto-select it.
+  // Otherwise, present a list including a "Go Back" option if allowed.
+  if (containers.length === 1 && !allowBack) {
     logger.info(chalk.dim("Single container detected, auto-selecting..."));
     return containers[0].name;
+  } else {
+    choices = containers.map((container) => {
+      return {
+        name: `${chalk.green(container.name)} ${chalk.yellow(
+          `(${container.lastStatus})`
+        )}`,
+        value: container.name,
+      };
+    });
+
+    if (allowBack) {
+      choices.unshift({
+        name: chalk.blue("← Go Back"),
+        value: "__BACK__",
+      });
+    }
   }
 
   const { containerName } = await inquirer.prompt([
@@ -302,12 +422,7 @@ async function selectContainer(ecs, cluster, taskArn) {
       name: "containerName",
       message: chalk.blue("Select container:"),
       prefix: "🐳",
-      choices: containers.map((container) => ({
-        name: `${chalk.green(container.name)} ${chalk.yellow(
-          `(${container.lastStatus})`
-        )}`,
-        value: container.name,
-      })),
+      choices,
     },
   ]);
 
@@ -497,16 +612,37 @@ program
   .action(async () => {
     try {
       const ecs = await initAWS();
-      const cluster = await selectCluster(ecs);
-      const taskArn = await selectTask(ecs, cluster);
-      const containerName = await selectContainer(ecs, cluster, taskArn);
+      let cluster, taskArn, containerName;
 
-      logger.info(
-        chalk.green(
-          `🚀 Connecting to container ${chalk.bold(containerName)}...`
-        )
-      );
-      await executeCommand(cluster, taskArn, containerName);
+      // Cluster selection (top-level; no back option here)
+      cluster = await selectCluster(ecs);
+
+      // Wrap prompts in loops to allow backward navigation.
+      while (true) {
+        // Task selection: allow going back to re-select cluster.
+        taskArn = await selectTask(ecs, cluster, true);
+        if (taskArn === "__BACK__") {
+          cluster = await selectCluster(ecs);
+          continue; // go back and select a new cluster
+        }
+
+        // Container selection: allow going back to re-select task.
+        while (true) {
+          containerName = await selectContainer(ecs, cluster, taskArn, true);
+          if (containerName === "__BACK__") {
+            // Go back to task selection
+            break;
+          }
+
+          logger.info(
+            chalk.green(
+              `🚀 Connecting to container ${chalk.bold(containerName)}...`
+            )
+          );
+          await executeCommand(cluster, taskArn, containerName);
+          process.exit(0);
+        }
+      }
     } catch (err) {
       logger.error(chalk.red(err.message));
       process.exit(1);
