@@ -26,6 +26,7 @@ Interactive CLI tool for exec into AWS ECS tasks (containers) - from [SchematicH
 - ⚙️ Profile and region management
 - 💾 Persistent configuration
 - 🎨 Beautiful CLI interface
+- 📍 Navigation between clusters, tasks, and containers.
 
 ## Prerequisites
 
@@ -121,11 +122,11 @@ aws sso login --profile your-profile
 ```
 
 - `AWS Credentials not configured`
-  
+
   Configure your AWS credentials by setting up your `~/.aws/credentials` and `~/.aws/config` files. You can use aws configure to set up access keys, or set up AWS SSO profiles.
 
 - `No clusters found`
-  
+
   Ensure you have access to ECS clusters in the selected AWS region and that your AWS credentials have the necessary permissions.
 
 ## License
