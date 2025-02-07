@@ -129,6 +129,14 @@ aws sso login --profile your-profile
 
   Ensure you have access to ECS clusters in the selected AWS region and that your AWS credentials have the necessary permissions.
 
+### ECS Exec Checker from AWS
+
+<https://github.com/aws-containers/amazon-ecs-exec-checker>
+
+```bash
+bash <( curl -Ls https://raw.githubusercontent.com/aws-containers/amazon-ecs-exec-checker/main/check-ecs-exec.sh ) <YOUR_ECS_CLUSTER_NAME> <YOUR_ECS_TASK_ID>
+```
+
 ## License
 
 MIT
