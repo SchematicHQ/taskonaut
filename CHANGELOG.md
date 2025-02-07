@@ -1,9 +1,13 @@
 # [1.4.0](https://github.com/schematichq/taskonaut/compare/v1.3.0...v1.4.0) (2025-02-07)
 
-
 ### Features
 
-* force release ([5809c54](https://github.com/schematichq/taskonaut/commit/5809c540e93dcc2fb22e639271b0e306f27ecd26))
+- force release ([5809c54](https://github.com/schematichq/taskonaut/commit/5809c540e93dcc2fb22e639271b0e306f27ecd26))
+- update regions
+- update packages to latest
+- add navigation
+- add short-IDs for tasks
+- add created_at timestamp
 
 ## [1.1.1](https://github.com/SchematicHQ/taskonaut/compare/v1.1.0...v1.1.1) (2025-01-06)
 
