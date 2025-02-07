@@ -1,9 +1,15 @@
-## [1.1.1](https://github.com/SchematicHQ/taskonaut/compare/v1.1.0...v1.1.1) (2025-01-06)
+# [1.4.0](https://github.com/schematichq/taskonaut/compare/v1.3.0...v1.4.0) (2025-02-07)
 
+
+### Features
+
+* force release ([5809c54](https://github.com/schematichq/taskonaut/commit/5809c540e93dcc2fb22e639271b0e306f27ecd26))
+
+## [1.1.1](https://github.com/SchematicHQ/taskonaut/compare/v1.1.0...v1.1.1) (2025-01-06)
 
 ### Bug Fixes
 
-* update installation command in README to use scoped package name ([892c86c](https://github.com/SchematicHQ/taskonaut/commit/892c86c319e8fe34c08c6b27f6dbf931fa24311b))
+- update installation command in README to use scoped package name ([892c86c](https://github.com/SchematicHQ/taskonaut/commit/892c86c319e8fe34c08c6b27f6dbf931fa24311b))
 
 # [1.1.0](https://github.com/SchematicHQ/taskonaut/compare/v1.0.0...v1.1.0) (2024-12-19)
 
