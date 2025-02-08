@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/schematichq/taskonaut/compare/v1.4.0...v1.5.0) (2025-02-08)
+
+
+### Features
+
+* Improve code structure and error handling in ECS task management ([e66b9f3](https://github.com/schematichq/taskonaut/commit/e66b9f3c6884984cfea94529952dd9429c16d021))
+
 # [1.4.0](https://github.com/schematichq/taskonaut/compare/v1.3.0...v1.4.0) (2025-02-07)
 
 ### Features
