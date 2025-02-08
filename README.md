@@ -86,6 +86,23 @@ Configuration is stored in:
 - Linux: `~/.config/taskonaut-nodejs`
 - Windows:`%APPDATA%\taskonaut-nodejs`
 
+## AWS authentication
+
+### `aws sso login`
+
+```bash
+aws sso login --porfile PORFILE_NAME
+taskonaut
+```
+
+### `assume`
+
+- TBD
+
+### `vault`
+
+- TBD
+
 ## Troubleshooting (macOS)
 
 > [!CAUTION]
