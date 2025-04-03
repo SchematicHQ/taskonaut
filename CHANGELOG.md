@@ -1,9 +1,16 @@
-# [1.5.0](https://github.com/schematichq/taskonaut/compare/v1.4.0...v1.5.0) (2025-02-08)
+## [1.5.1](https://github.com/schematichq/taskonaut/compare/v1.5.0...v1.5.1) (2025-04-03)
 
+
+### Bug Fixes
+
+* **index.js:** remove regions.js and fix region file not found bug ([a47ea43](https://github.com/schematichq/taskonaut/commit/a47ea43c187a2b4319159d91a33ebb29789037f9))
+* **test:** fix test ([4f72e5d](https://github.com/schematichq/taskonaut/commit/4f72e5d70e5e4f8f13269e210f1f6d43f9f14f0e))
+
+# [1.5.0](https://github.com/schematichq/taskonaut/compare/v1.4.0...v1.5.0) (2025-02-08)
 
 ### Features
 
-* Improve code structure and error handling in ECS task management ([e66b9f3](https://github.com/schematichq/taskonaut/commit/e66b9f3c6884984cfea94529952dd9429c16d021))
+- Improve code structure and error handling in ECS task management ([e66b9f3](https://github.com/schematichq/taskonaut/commit/e66b9f3c6884984cfea94529952dd9429c16d021))
 
 # [1.4.0](https://github.com/schematichq/taskonaut/compare/v1.3.0...v1.4.0) (2025-02-07)
 
