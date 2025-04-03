@@ -8,6 +8,7 @@
     "taskonaut": "./index.js"
   },
   "scripts": {
+    "commit": "git-cz",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write '**/*.{js,json,md}'",
@@ -20,6 +21,11 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/SchematicHQ/taskonaut.git"
+  },
+  "config": {
+    "commitizen": {
+      "path": "./node_modules/cz-conventional-changelog"
+    }
   },
   "keywords": [
     "aws",
@@ -65,17 +71,19 @@
     "pino-pretty": "^13.0.0"
   },
   "devDependencies": {
-    "@jest/globals": "^29.7.0",
-    "jest": "^29.7.0",
     "@eslint/js": "^9.23.0",
+    "@jest/globals": "^29.7.0",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
     "@semantic-release/npm": "^12.0.1",
+    "commitizen": "^4.3.1",
+    "cz-conventional-changelog": "^3.3.0",
     "eslint": "^9.23.0",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-prettier": "^5.2.5",
     "globals": "^16.0.0",
+    "jest": "^29.7.0",
     "prettier": "^3.5.3",
     "semantic-release": "^24.2.3"
   }
