@@ -61,7 +61,7 @@
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
     "conf": "^13.1.0",
-    "dotenv": "^16.4.7",
+    "dotenv": "^16.5.0",
     "figlet": "^1.8.0",
     "gradient-string": "^3.0.0",
     "ini": "^5.0.0",
