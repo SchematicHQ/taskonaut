@@ -1,10 +1,16 @@
-## [1.5.1](https://github.com/schematichq/taskonaut/compare/v1.5.0...v1.5.1) (2025-04-03)
+# [1.6.0](https://github.com/schematichq/taskonaut/compare/v1.5.2...v1.6.0) (2025-06-02)
 
+
+### Features
+
+* add workflow dispatch for release ([e5b1f2b](https://github.com/schematichq/taskonaut/commit/e5b1f2bc2c63597fa205aea1c860e578ef50b995))
+
+## [1.5.1](https://github.com/schematichq/taskonaut/compare/v1.5.0...v1.5.1) (2025-04-03)
 
 ### Bug Fixes
 
-* **index.js:** remove regions.js and fix region file not found bug ([a47ea43](https://github.com/schematichq/taskonaut/commit/a47ea43c187a2b4319159d91a33ebb29789037f9))
-* **test:** fix test ([4f72e5d](https://github.com/schematichq/taskonaut/commit/4f72e5d70e5e4f8f13269e210f1f6d43f9f14f0e))
+- **index.js:** remove regions.js and fix region file not found bug ([a47ea43](https://github.com/schematichq/taskonaut/commit/a47ea43c187a2b4319159d91a33ebb29789037f9))
+- **test:** fix test ([4f72e5d](https://github.com/schematichq/taskonaut/commit/4f72e5d70e5e4f8f13269e210f1f6d43f9f14f0e))
 
 # [1.5.0](https://github.com/schematichq/taskonaut/compare/v1.4.0...v1.5.0) (2025-02-08)
 
