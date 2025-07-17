@@ -86,6 +86,6 @@
     "globals": "^16.3.0",
     "jest": "^30.0.4",
     "prettier": "^3.6.2",
-    "semantic-release": "^24.2.6"
+    "semantic-release": "^24.2.7"
   }
 }
