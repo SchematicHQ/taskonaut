@@ -1,9 +1,20 @@
-# [1.6.0](https://github.com/schematichq/taskonaut/compare/v1.5.2...v1.6.0) (2025-06-02)
+# [1.7.0](https://github.com/schematichq/taskonaut/compare/v1.6.0...v1.7.0) (2025-07-17)
+
+
+### Bug Fixes
+
+* lint errors ([56b5ae1](https://github.com/schematichq/taskonaut/commit/56b5ae150bfe17dcb9c55b0f96a6af4f227bd9ec))
 
 
 ### Features
 
-* add workflow dispatch for release ([e5b1f2b](https://github.com/schematichq/taskonaut/commit/e5b1f2bc2c63597fa205aea1c860e578ef50b995))
+* add rollback ([c73af0f](https://github.com/schematichq/taskonaut/commit/c73af0f675328cd7b73c3db0a95c486aa9908604))
+
+# [1.6.0](https://github.com/schematichq/taskonaut/compare/v1.5.2...v1.6.0) (2025-06-02)
+
+### Features
+
+- add workflow dispatch for release ([e5b1f2b](https://github.com/schematichq/taskonaut/commit/e5b1f2bc2c63597fa205aea1c860e578ef50b995))
 
 ## [1.5.1](https://github.com/schematichq/taskonaut/compare/v1.5.0...v1.5.1) (2025-04-03)
 
