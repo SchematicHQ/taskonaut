@@ -1,9 +1,17 @@
-# [1.6.0](https://github.com/schematichq/taskonaut/compare/v1.5.2...v1.6.0) (2025-06-02)
+## [1.7.1](https://github.com/schematichq/taskonaut/compare/v1.7.0...v1.7.1) (2025-07-17)
 
+
+### Reverts
+
+* Revert "chore(release): 1.7.0 [skip ci]" ([b859896](https://github.com/schematichq/taskonaut/commit/b8598961fd5201656e1d4d49567426e0f89be353))
+* Revert "feat!: modular refactor" ([8ede658](https://github.com/schematichq/taskonaut/commit/8ede6580260d42752a47ff24373a647740b93747))
+* Revert "fix: lint errors" ([2acb7b3](https://github.com/schematichq/taskonaut/commit/2acb7b36155444c16ea636173df698fe33dc9a1f))
+
+# [1.6.0](https://github.com/schematichq/taskonaut/compare/v1.5.2...v1.6.0) (2025-06-02)
 
 ### Features
 
-* add workflow dispatch for release ([e5b1f2b](https://github.com/schematichq/taskonaut/commit/e5b1f2bc2c63597fa205aea1c860e578ef50b995))
+- add workflow dispatch for release ([e5b1f2b](https://github.com/schematichq/taskonaut/commit/e5b1f2bc2c63597fa205aea1c860e578ef50b995))
 
 ## [1.5.1](https://github.com/schematichq/taskonaut/compare/v1.5.0...v1.5.1) (2025-04-03)
 
