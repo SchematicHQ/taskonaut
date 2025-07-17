@@ -4,6 +4,7 @@ import { ECS } from "@aws-sdk/client-ecs";
 import { fromIni } from "@aws-sdk/credential-providers";
 import { Command } from "commander";
 import inquirer from "inquirer";
+import prompts from "prompts";
 import pino from "pino";
 import dotenv from "dotenv";
 import chalk from "chalk";
@@ -11,14 +12,16 @@ import figlet from "figlet";
 import ora from "ora";
 import Conf from "conf";
 import { pastel } from "gradient-string";
-import { spawn, execSync } from "child_process";
-import fs from "fs";
-import path from "path";
-import os from "os";
+import { spawn, execSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import ini from "ini";
 
 // Load environment variables
-dotenv.config();
+dotenv.config({
+  quiet: true,
+});
 
 // ---------------------------------------------------------------------------
 // Configuration Management using Conf
@@ -220,13 +223,14 @@ const initAWS = async () => {
 /**
  * Lists ECS clusters along with their service, task, and container instance counts.
  * @param {ECS} ecs - AWS ECS client.
+ * @param {boolean} quiet - Whether to suppress spinner output.
  * @returns {Promise<Array<{clusterName: string, servicesCount: number, tasksCount: number, containerInstancesCount: number}>>} Clusters with details.
  */
-async function listClusters(ecs) {
+async function listClusters(ecs, quiet = false) {
   try {
-    const spinner = ora("Fetching clusters...").start();
+    const spinner = quiet ? null : ora("Fetching clusters...").start();
     const { clusterArns } = await ecs.listClusters({});
-    spinner.succeed("Clusters fetched");
+    if (spinner) spinner.succeed("Clusters fetched");
 
     if (!clusterArns || clusterArns.length === 0) {
       logger.warn(chalk.yellow("No clusters found."));
@@ -309,23 +313,45 @@ async function selectCluster(ecs) {
     logger.warn(chalk.yellow("No clusters found."));
     throw new Error("No clusters available");
   }
-  const { cluster } = await inquirer.prompt([
-    {
-      type: "list",
-      name: "cluster",
-      message: chalk.blue("Select ECS cluster:"),
-      prefix: "🚀",
-      choices: clusters.map((c) => ({
-        name:
-          chalk.green(c.clusterName) +
-          chalk.yellow(
-            ` (Services: ${c.servicesCount}, Tasks: ${c.tasksCount}, Container Instances: ${c.containerInstancesCount})`,
-          ),
-        value: c.clusterName,
-      })),
-    },
-  ]);
-  return cluster;
+
+  // Sort clusters: ones with tasks first, then by task count descending
+  const sortedClusters = clusters.sort((a, b) => {
+    if (a.tasksCount > 0 && b.tasksCount === 0) return -1;
+    if (a.tasksCount === 0 && b.tasksCount > 0) return 1;
+    return b.tasksCount - a.tasksCount;
+  });
+
+  const clusterChoices = sortedClusters.map(c => {
+    const hasActiveTasks = c.tasksCount > 0;
+    const taskInfo = hasActiveTasks 
+      ? chalk.green(`${c.tasksCount} tasks`) 
+      : chalk.gray(`${c.tasksCount} tasks`);
+    
+    const status = hasActiveTasks 
+      ? chalk.green("● Active") 
+      : chalk.gray("○ Empty");
+    
+    return {
+      title: `${chalk.bold(c.clusterName)} ${status}`,
+      description: `Services: ${c.servicesCount}, Tasks: ${taskInfo}, Instances: ${c.containerInstancesCount}`,
+      value: c.clusterName
+    };
+  });
+
+  const clusterResponse = await prompts({
+    type: 'select',
+    name: 'cluster',
+    message: chalk.blue('Select ECS cluster:'),
+    choices: clusterChoices,
+    hint: '- Clusters with active tasks are shown first'
+  });
+
+  if (!clusterResponse.cluster) {
+    logger.info(chalk.dim("Operation cancelled"));
+    process.exit(0);
+  }
+
+  return clusterResponse.cluster;
 }
 
 /**
@@ -341,9 +367,45 @@ async function selectTask(ecs, cluster, allowBack = false) {
     const { taskArns } = await ecs.listTasks({ cluster });
 
     if (!taskArns || taskArns.length === 0) {
-      spinner.fail("No tasks found");
-      logger.warn(chalk.yellow("No tasks found in cluster."));
-      throw new Error("No tasks available in cluster");
+      spinner.warn("No tasks found in cluster");
+      
+      if (allowBack) {
+        logger.info(chalk.blue("💡 This cluster has no running tasks. You can:"));
+        logger.info(chalk.dim("   • Go back and select a different cluster"));
+        logger.info(chalk.dim("   • Check if tasks are running in the AWS Console"));
+        logger.info(chalk.dim("   • Verify you have the correct AWS profile/region selected"));
+        
+        const actionResponse = await prompts({
+          type: 'select',
+          name: 'action',
+          message: chalk.blue('What would you like to do?'),
+          choices: [
+            {
+              title: chalk.blue("← Go Back to Cluster Selection"),
+              value: "__BACK__",
+            },
+            {
+              title: chalk.red("Exit taskonaut"),
+              value: "__EXIT__",
+            },
+          ],
+        });
+        
+        if (!actionResponse.action) {
+          logger.info(chalk.dim("Operation cancelled"));
+          process.exit(0);
+        }
+        
+        if (actionResponse.action === "__EXIT__") {
+          logger.info(chalk.dim("Goodbye! 👋"));
+          process.exit(0);
+        }
+        
+        return actionResponse.action; // Return "__BACK__"
+      } else {
+        logger.warn(chalk.yellow("No tasks found in cluster."));
+        throw new Error("No tasks available in cluster");
+      }
     }
 
     const { tasks } = await ecs.describeTasks({
@@ -544,6 +606,225 @@ async function executeCommand(cluster, taskArn, containerName) {
 }
 
 // ---------------------------------------------------------------------------
+// ECS Rollback Functions
+// ---------------------------------------------------------------------------
+
+/**
+ * Lists ECS services within a cluster with their current task definition info.
+ * @param {ECS} ecs - AWS ECS client.
+ * @param {string} cluster - Cluster name.
+ * @param {boolean} quiet - Whether to suppress spinner output.
+ * @returns {Promise<Array<{serviceName: string, serviceArn: string, taskDefinition: string, taskDefinitionFamily: string, revision: number, status: string, desiredCount: number, runningCount: number}>>} Services with details.
+ */
+async function listServices(ecs, cluster, quiet = false) {
+  try {
+    const spinner = quiet ? null : ora("Fetching services...").start();
+    const { serviceArns } = await ecs.listServices({ cluster });
+    if (spinner) spinner.text = "Fetching service details...";
+
+    if (!serviceArns || serviceArns.length === 0) {
+      if (spinner) spinner.warn("No services found");
+      return [];
+    }
+
+    const { services } = await ecs.describeServices({
+      cluster,
+      services: serviceArns,
+    });
+
+    if (spinner) spinner.succeed("Services fetched");
+
+    return services.map((service) => {
+      const taskDefParts = service.taskDefinition.split("/").pop().split(":");
+      const family = taskDefParts[0];
+      const revision = parseInt(taskDefParts[1]);
+      
+      return {
+        serviceName: service.serviceName,
+        serviceArn: service.serviceArn,
+        taskDefinition: service.taskDefinition,
+        taskDefinitionFamily: family,
+        revision: revision,
+        status: service.status,
+        desiredCount: service.desiredCount,
+        runningCount: service.runningCount,
+      };
+    });
+  } catch (err) {
+    logger.error(chalk.red(err.message));
+    throw err;
+  }
+}
+
+/**
+ * Lists task definition revisions for a specific family.
+ * @param {ECS} ecs - AWS ECS client.
+ * @param {string} family - Task definition family name.
+ * @param {boolean} quiet - Whether to suppress spinner output.
+ * @returns {Promise<Array<{taskDefinition: string, revision: number, status: string, createdAt: Date}>>} Task definition revisions.
+ */
+async function listTaskDefinitionRevisions(ecs, family, quiet = false) {
+  try {
+    const spinner = quiet ? null : ora("Fetching task definition revisions...").start();
+    const { taskDefinitionArns } = await ecs.listTaskDefinitions({
+      familyPrefix: family,
+      status: "ACTIVE",
+      sort: "DESC",
+    });
+
+    if (!taskDefinitionArns || taskDefinitionArns.length === 0) {
+      if (spinner) spinner.warn("No task definitions found");
+      return [];
+    }
+
+    // Get detailed info for each task definition
+    const revisions = await Promise.all(
+      taskDefinitionArns.map(async (arn) => {
+        try {
+          const { taskDefinition } = await ecs.describeTaskDefinition({
+            taskDefinition: arn,
+          });
+          const revision = parseInt(arn.split(":").pop());
+          return {
+            taskDefinition: arn,
+            revision: revision,
+            status: taskDefinition.status,
+            createdAt: taskDefinition.registeredAt,
+          };
+        } catch (err) {
+          logger.warn(chalk.yellow(`Failed to describe task definition ${arn}: ${err.message}`));
+          return null;
+        }
+      })
+    );
+
+    if (spinner) spinner.succeed("Task definition revisions fetched");
+    return revisions.filter(Boolean).sort((a, b) => b.revision - a.revision);
+  } catch (err) {
+    logger.error(chalk.red(err.message));
+    throw err;
+  }
+}
+
+/**
+ * Gets detailed comparison between two task definition revisions.
+ * @param {ECS} ecs - AWS ECS client.
+ * @param {string} currentArn - Current task definition ARN.
+ * @param {string} targetArn - Target task definition ARN.
+ * @param {boolean} quiet - Whether to suppress spinner output.
+ * @returns {Promise<{current: Object, target: Object, differences: Array}>} Comparison details.
+ */
+async function compareTaskDefinitions(ecs, currentArn, targetArn, quiet = false) {
+  try {
+    const spinner = quiet ? null : ora("Comparing task definitions...").start();
+    
+    const [currentResponse, targetResponse] = await Promise.all([
+      ecs.describeTaskDefinition({ taskDefinition: currentArn }),
+      ecs.describeTaskDefinition({ taskDefinition: targetArn }),
+    ]);
+
+    const current = currentResponse.taskDefinition;
+    const target = targetResponse.taskDefinition;
+    
+    if (spinner) spinner.succeed("Task definitions compared");
+
+    // Extract key differences for display
+    const differences = [];
+    
+    // Compare container images
+    const currentImages = current.containerDefinitions.map(c => ({ 
+      name: c.name, 
+      image: c.image 
+    }));
+    const targetImages = target.containerDefinitions.map(c => ({ 
+      name: c.name, 
+      image: c.image 
+    }));
+    
+    currentImages.forEach(currentContainer => {
+      const targetContainer = targetImages.find(t => t.name === currentContainer.name);
+      if (targetContainer && currentContainer.image !== targetContainer.image) {
+        differences.push({
+          type: "image",
+          container: currentContainer.name,
+          current: currentContainer.image,
+          target: targetContainer.image,
+        });
+      }
+    });
+
+    // Compare CPU and memory
+    if (current.cpu !== target.cpu) {
+      differences.push({
+        type: "cpu",
+        current: current.cpu,
+        target: target.cpu,
+      });
+    }
+
+    if (current.memory !== target.memory) {
+      differences.push({
+        type: "memory",
+        current: current.memory,
+        target: target.memory,
+      });
+    }
+
+    return {
+      current: {
+        revision: current.revision,
+        family: current.family,
+        createdAt: current.registeredAt,
+        cpu: current.cpu,
+        memory: current.memory,
+        images: currentImages,
+      },
+      target: {
+        revision: target.revision,
+        family: target.family,
+        createdAt: target.registeredAt,
+        cpu: target.cpu,
+        memory: target.memory,
+        images: targetImages,
+      },
+      differences,
+    };
+  } catch (err) {
+    logger.error(chalk.red(err.message));
+    throw err;
+  }
+}
+
+
+
+/**
+ * Performs the actual service rollback by updating the service.
+ * @param {ECS} ecs - AWS ECS client.
+ * @param {string} cluster - Cluster name.
+ * @param {string} serviceName - Service name.
+ * @param {string} taskDefinitionArn - Target task definition ARN.
+ * @param {boolean} quiet - Whether to suppress spinner output.
+ * @returns {Promise<Object>} Update service response.
+ */
+async function performRollback(ecs, cluster, serviceName, taskDefinitionArn, quiet = false) {
+  try {
+    const spinner = quiet ? null : ora("Initiating service rollback...").start();
+    
+    const response = await ecs.updateService({
+      cluster,
+      service: serviceName,
+      taskDefinition: taskDefinitionArn,
+    });
+
+    if (spinner) spinner.succeed("Rollback initiated successfully");
+    return response;
+  } catch (err) {
+    logger.error(chalk.red(err.message));
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Diagnostic Functions
 // ---------------------------------------------------------------------------
 
@@ -661,7 +942,7 @@ const program = new Command();
 
 program
   .name(chalk.cyan("taskonaut"))
-  .description(chalk.yellow("✨ Interactive ECS task executor"))
+  .description(chalk.yellow("✨ Interactive ECS task executor and rollback tool"))
   .addHelpText("after", chalk.dim("Example: taskonaut "))
   .action(async () => {
     try {
@@ -810,6 +1091,202 @@ program
       await performDiagnostics();
     } catch (err) {
       logger.error(chalk.red("Diagnostics failed: " + err.message));
+      process.exit(1);
+    }
+  });
+
+program
+  .command("rollback")
+  .description("Rollback an ECS service to a previous task definition revision")
+  .addHelpText("after", chalk.dim("Example: taskonaut rollback"))
+  .action(async () => {
+    try {
+      console.log(chalk.cyan.bold("🔄 ECS Service Rollback"));
+      console.log(chalk.dim("Select a cluster, service, and revision to rollback to.\n"));
+
+      const ecs = await initAWS();
+      
+      // Step 1: Select cluster
+      const clusters = await listClusters(ecs, true); // quiet mode to avoid spinner interference
+      if (!clusters || clusters.length === 0) {
+        console.log(chalk.yellow("No ECS clusters found"));
+        return;
+      }
+
+      const clusterChoices = clusters.map(c => ({
+        title: `${chalk.green(c.clusterName)} ${chalk.yellow(`(${c.servicesCount} services, ${c.tasksCount} tasks)`)}`,
+        value: c.clusterName
+      }));
+
+      const clusterResponse = await prompts({
+        type: 'select',
+        name: 'cluster',
+        message: chalk.blue('Select ECS cluster:'),
+        choices: clusterChoices
+      });
+
+      if (!clusterResponse.cluster) {
+        console.log(chalk.dim("Operation cancelled"));
+        return;
+      }
+
+      const cluster = clusterResponse.cluster;
+      console.log(chalk.green(`📍 Selected cluster: ${chalk.bold(cluster)}\n`));
+
+      // Step 2: Select service
+      const services = await listServices(ecs, cluster, true); // quiet mode
+      if (!services || services.length === 0) {
+        console.log(chalk.yellow("No services found in cluster"));
+        return;
+      }
+
+      const serviceChoices = services.map(s => ({
+        title: `${chalk.green(s.serviceName)} ${chalk.yellow(`(${s.taskDefinitionFamily}:${s.revision}, ${s.status}, ${s.runningCount}/${s.desiredCount} tasks)`)}`,
+        value: s
+      }));
+
+      const serviceResponse = await prompts({
+        type: 'select',
+        name: 'service',
+        message: chalk.blue('Select ECS service to rollback:'),
+        choices: serviceChoices
+      });
+
+      if (!serviceResponse.service) {
+        console.log(chalk.dim("Operation cancelled"));
+        return;
+      }
+
+      const service = serviceResponse.service;
+      console.log(chalk.green(`🎯 Selected service: ${chalk.bold(service.serviceName)}`));
+      console.log(chalk.dim(`   Current revision: ${service.taskDefinitionFamily}:${service.revision}\n`));
+
+      // Step 3: Select target revision
+      const revisions = await listTaskDefinitionRevisions(ecs, service.taskDefinitionFamily, true); // quiet mode
+      const availableRevisions = revisions
+        .filter(r => r.revision !== service.revision)
+        .sort((a, b) => b.revision - a.revision);
+
+      if (availableRevisions.length === 0) {
+        console.log(chalk.yellow("No other revisions available for rollback"));
+        return;
+      }
+
+      const revisionChoices = availableRevisions.map(r => ({
+        title: `${chalk.green(`Revision ${r.revision}`)} ${chalk.yellow(`(${r.status}, created: ${new Date(r.createdAt).toLocaleString()})`)}`,
+        value: r
+      }));
+
+      const revisionResponse = await prompts({
+        type: 'select',
+        name: 'revision',
+        message: chalk.blue('Select revision to rollback to:'),
+        choices: revisionChoices
+      });
+
+      if (!revisionResponse.revision) {
+        console.log(chalk.dim("Operation cancelled"));
+        return;
+      }
+
+      const targetRevision = revisionResponse.revision;
+      console.log(chalk.green(`📋 Target revision: ${chalk.bold(`${service.taskDefinitionFamily}:${targetRevision.revision}`)}\n`));
+
+      // Step 4: Show comparison between current and target
+      const comparison = await compareTaskDefinitions(
+        ecs,
+        service.taskDefinition,
+        targetRevision.taskDefinition,
+        true // quiet mode
+      );
+
+      // Display comparison details
+      console.log(chalk.blue.bold("🔍 Rollback Preview:"));
+      console.log(chalk.dim("─".repeat(60)));
+      
+      console.log(chalk.yellow("Current (will be replaced):"));
+      console.log(`  📦 Revision: ${chalk.bold(comparison.current.revision)}`);
+      console.log(`  📅 Created: ${chalk.dim(new Date(comparison.current.createdAt).toLocaleString())}`);
+      if (comparison.current.cpu) console.log(`  💻 CPU: ${comparison.current.cpu}`);
+      if (comparison.current.memory) console.log(`  🧠 Memory: ${comparison.current.memory}`);
+      if (comparison.current.images && comparison.current.images.length > 0) {
+        comparison.current.images.forEach(img => {
+          const imageTag = img.image.includes(':') ? img.image.split(':').pop() : 'latest';
+          console.log(`  🐳 ${chalk.cyan(img.name)}: ${chalk.dim(imageTag)}`);
+        });
+      }
+      
+      console.log(chalk.green("\nTarget (rollback to):"));
+      console.log(`  📦 Revision: ${chalk.bold(comparison.target.revision)}`);
+      console.log(`  📅 Created: ${chalk.dim(new Date(comparison.target.createdAt).toLocaleString())}`);
+      if (comparison.target.cpu) console.log(`  💻 CPU: ${comparison.target.cpu}`);
+      if (comparison.target.memory) console.log(`  🧠 Memory: ${comparison.target.memory}`);
+      if (comparison.target.images && comparison.target.images.length > 0) {
+        comparison.target.images.forEach(img => {
+          const imageTag = img.image.includes(':') ? img.image.split(':').pop() : 'latest';
+          console.log(`  🐳 ${chalk.cyan(img.name)}: ${chalk.dim(imageTag)}`);
+        });
+      }
+
+      // Show container image differences
+      if (comparison.differences.length > 0) {
+        console.log(chalk.red.bold("\n⚠️  Changes detected:"));
+        comparison.differences.forEach(diff => {
+          switch (diff.type) {
+            case "image":
+              console.log(`  🐳 ${chalk.yellow(diff.container)}:`);
+              console.log(`     Current: ${chalk.red(diff.current)}`);
+              console.log(`     Target:  ${chalk.green(diff.target)}`);
+              break;
+            case "cpu":
+              console.log(`  💻 CPU: ${chalk.red(diff.current)} → ${chalk.green(diff.target)}`);
+              break;
+            case "memory":
+              console.log(`  🧠 Memory: ${chalk.red(diff.current)} → ${chalk.green(diff.target)}`);
+              break;
+          }
+        });
+      } else {
+        console.log(chalk.blue("\n✨ No significant changes detected between revisions"));
+      }
+
+      // Step 5: Confirm rollback
+      const confirmResponse = await prompts({
+        type: 'confirm',
+        name: 'confirm',
+        message: chalk.yellow(`⚠️  Proceed with rollback? (${service.revision} → ${targetRevision.revision})`),
+        initial: false
+      });
+
+      if (!confirmResponse.confirm) {
+        console.log(chalk.dim("Rollback cancelled by user"));
+        return;
+      }
+
+      // Step 6: Perform rollback
+      console.log(chalk.blue("🚀 Starting rollback..."));
+      
+      const rollbackResponse = await performRollback(
+        ecs,
+        cluster,
+        service.serviceName,
+        targetRevision.taskDefinition,
+        true // quiet mode
+      );
+
+      // Step 7: Show rollback status
+      console.log(chalk.green.bold("\n✅ Rollback initiated successfully!"));
+      console.log(chalk.dim("─".repeat(50)));
+      console.log(`🎯 Service: ${chalk.bold(service.serviceName)}`);
+      console.log(`📦 Task Definition: ${chalk.bold(targetRevision.taskDefinition)}`);
+      console.log(`🔄 Deployment ID: ${chalk.dim(rollbackResponse.service.deployments[0]?.id || "N/A")}`);
+      console.log(`📊 Status: ${chalk.yellow(rollbackResponse.service.deployments[0]?.status || "N/A")}`);
+      
+      console.log(chalk.blue("\n💡 Pro tip: Monitor the deployment in the AWS Console or use AWS CLI to check status:"));
+      console.log(chalk.dim(`   aws ecs describe-services --cluster ${cluster} --services ${service.serviceName}`));
+      
+    } catch (err) {
+      console.error(chalk.red("Rollback failed: " + err.message));
       process.exit(1);
     }
   });
