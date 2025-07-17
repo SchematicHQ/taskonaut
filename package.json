@@ -62,7 +62,7 @@
     "commander": "^14.0.0",
     "conf": "^14.0.0",
     "dotenv": "^17.2.0",
-    "figlet": "^1.8.1",
+    "figlet": "^1.8.2",
     "gradient-string": "^3.0.0",
     "ini": "^5.0.0",
     "inquirer": "^12.7.0",
