@@ -19,7 +19,7 @@ const { version } = packageJson;
 import { setupGlobalErrorHandlers } from './src/core/errors.js';
 import logger from './src/core/logger.js';
 import config from './src/core/config.js';
-import help, { HelpManager } from './src/ui/help.js';
+import help from './src/ui/help.js';
 
 // Import command modules
 import { ExecuteCommand } from './src/commands/execute.js';

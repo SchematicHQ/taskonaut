@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, afterEach } from "@jest/globals";
+import { describe, expect, test, beforeEach } from "@jest/globals";
 import { ConfigManager, AWSProfileManager } from "../../src/core/config.js";
 import { ValidationError } from "../../src/core/errors.js";
 import { homedir } from "os";

@@ -91,7 +91,7 @@ export class ECSTaskManager {
           return basicTasks;
         },
         'Fetching ECS tasks...',
-        quiet ? null : `Found ${taskArns?.length || 0} tasks`,
+        quiet ? null : 'ECS tasks retrieved successfully',
         'Failed to fetch ECS tasks'
       );
     } catch (error) {

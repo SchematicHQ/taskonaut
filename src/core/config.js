@@ -7,7 +7,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { ValidationError, ERROR_CODES } from './errors.js';
+import { ValidationError } from './errors.js';
 import logger from './logger.js';
 
 /**
@@ -472,7 +472,7 @@ export class AWSProfileManager {
     try {
       this.getProfile(profileName);
       return true;
-    } catch (error) {
+    } catch {
       return false;
     }
   }

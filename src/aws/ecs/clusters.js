@@ -55,13 +55,13 @@ export class ECSClusterManager {
           return clusters;
         },
         'Fetching ECS clusters...',
-        quiet ? null : `Found ${clusterArns?.length || 0} clusters`,
+        quiet ? null : 'ECS clusters retrieved successfully',
         'Failed to fetch ECS clusters'
       );
 
       // Enhance cluster data with additional metrics if requested
       if (includeMetrics && clusters.length > 0) {
-        return await this._enhanceClusterData(clusters, quiet);
+        return await this._enhanceClusterData(clusters);
       }
 
       return this._formatClusterData(clusters);
@@ -164,22 +164,17 @@ export class ECSClusterManager {
         
         // Enhanced activity indicators
         let activityIndicator = '⚪'; // Default inactive
-        let statusColor = 'gray';
         
         if (cluster.status === 'ACTIVE') {
           if (hasActiveTasks && hasServices) {
             activityIndicator = '🟢'; // Fully active
-            statusColor = 'green';
           } else if (hasActiveTasks || hasServices) {
             activityIndicator = '🟡'; // Partially active
-            statusColor = 'yellow';
           } else {
             activityIndicator = '🔵'; // Active but idle
-            statusColor = 'blue';
           }
         } else {
           activityIndicator = '🔴'; // Inactive
-          statusColor = 'red';
         }
         
         // Format counts with icons
@@ -254,7 +249,7 @@ export class ECSClusterManager {
    * @returns {Promise<Array>} Enhanced cluster data
    * @private
    */
-  async _enhanceClusterData(clusters, quiet = false) {
+  async _enhanceClusterData(clusters) {
     return await SpinnerUtils.withProgress(
       clusters.map(cluster => ({
         fn: async () => {

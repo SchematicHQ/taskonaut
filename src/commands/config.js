@@ -76,7 +76,7 @@ export class ConfigCommand {
       console.log('\n' + formatter.formatStatus('Step 3: Validating Configuration', 'info', '🔍'));
 
       // Validate the selected profile
-      const validation = await SpinnerUtils.withSpinner(
+      await SpinnerUtils.withSpinner(
         async () => {
           const isValid = AWSProfileManager.validateProfile(selectedProfile);
           if (!isValid) {

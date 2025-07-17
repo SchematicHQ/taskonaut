@@ -107,9 +107,9 @@ Commands:
 
 Configuration is stored in:
 
-- macOS: `~/Users/$USER/Library/Preferences/taskonaut-nodejs`
-- Linux: `~/.config/taskonaut-nodejs`
-- Windows:`%APPDATA%\taskonaut-nodejs`
+- macOS: `~/.taskonaut`
+- Linux: `~/.taskonaut`
+- Windows:`%APPDATA%\taskonaut`
 
 ## 🔄 ECS Service Rollback
 

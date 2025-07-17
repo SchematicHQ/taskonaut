@@ -5,7 +5,6 @@
  */
 
 import chalk from 'chalk';
-import { inspect } from 'util';
 import config from '../core/config.js';
 
 /**
@@ -167,7 +166,7 @@ export class OutputFormatter {
     try {
       const json = JSON.stringify(data, null, indent);
       return colorize ? this._colorizeJSON(json) : json;
-    } catch (error) {
+    } catch {
       return this._colorize('Error: Unable to serialize to JSON', 'error');
     }
   }
@@ -178,7 +177,7 @@ export class OutputFormatter {
    * @param {Object} options - YAML options
    * @returns {string} Formatted YAML
    */
-  formatYAML(data, options = {}) {
+  formatYAML(data) {
     return this._objectToYAML(data, 0);
   }
 
