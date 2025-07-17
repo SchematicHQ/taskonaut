@@ -5,10 +5,13 @@
  */
 
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { ErrorHandler } from '../core/errors.js';
 import logger from '../core/logger.js';
 import { AWSProfileManager } from '../core/config.js';
-import { AWSClientManager } from '../aws/client.js';
+import { AWSClientManager, AWSCredentialValidator } from '../aws/client.js';
 import { SpinnerUtils } from '../ui/spinners.js';
 import { formatter } from '../ui/formatters.js';
 import { displayBanner } from '../ui/banner.js';
@@ -521,7 +524,7 @@ export class DoctorCommand {
           // Windows-specific requirements
           try {
             execSync('where aws', { stdio: 'pipe' });
-          } catch {
+          } catch (error) {
             issues.push('AWS CLI not in PATH on Windows');
             suggestions.push('Add AWS CLI to Windows PATH environment variable');
           }

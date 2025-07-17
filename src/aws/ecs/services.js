@@ -71,7 +71,7 @@ export class ECSServiceManager {
           return basicServices;
         },
         'Fetching ECS services...',
-        quiet ? null : 'ECS services retrieved successfully',
+        quiet ? null : `Found ${serviceArns?.length || 0} services`,
         'Failed to fetch ECS services'
       );
     } catch (error) {
@@ -469,7 +469,7 @@ export class ECSTaskDefinitionManager {
           return validRevisions;
         },
         'Fetching task definition revisions...',
-        quiet ? null : 'Task definition revisions retrieved successfully',
+        quiet ? null : `Found ${taskDefinitionArns?.length || 0} revisions`,
         'Failed to fetch task definition revisions'
       );
     } catch (error) {

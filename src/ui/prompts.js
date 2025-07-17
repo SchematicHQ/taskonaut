@@ -6,7 +6,7 @@
 
 import inquirer from 'inquirer';
 import chalk from 'chalk';
-import { UserCancelledError, ValidationError } from '../core/errors.js';
+import { UserCancelledError, ValidationError, ERROR_CODES } from '../core/errors.js';
 import logger from '../core/logger.js';
 import config from '../core/config.js';
 

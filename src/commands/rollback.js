@@ -4,7 +4,7 @@
  * @version 1.0.0
  */
 
-import { ErrorHandler, UserCancelledError } from '../core/errors.js';
+import { ErrorHandler, UserCancelledError, ValidationError } from '../core/errors.js';
 import logger from '../core/logger.js';
 import { AWSClientManager } from '../aws/client.js';
 import { ECSClusterManager } from '../aws/ecs/clusters.js';
@@ -256,7 +256,7 @@ export class RollbackCommand {
                     service: selectedService 
                   });
                   
-                  const shouldRetry = await this._handleRevisionSelectionError();
+                  const shouldRetry = await this._handleRevisionSelectionError(error);
                   if (!shouldRetry) {
                     return;
                   }
@@ -275,7 +275,7 @@ export class RollbackCommand {
                 cluster: currentCluster 
               });
               
-              const shouldRetry = await this._handleServiceSelectionError();
+              const shouldRetry = await this._handleServiceSelectionError(error);
               if (!shouldRetry) {
                 return;
               }
@@ -291,7 +291,7 @@ export class RollbackCommand {
           console.log('\n' + formatter.formatStatus('❌ Cluster selection failed', 'error'));
           ErrorHandler.handle(error, { operation: 'cluster selection for rollback' });
           
-          const shouldRetry = await this._handleClusterSelectionError();
+          const shouldRetry = await this._handleClusterSelectionError(error);
           if (!shouldRetry) {
             return;
           }
@@ -380,7 +380,7 @@ export class RollbackCommand {
    * @returns {Promise<boolean>} True if should retry, false if should exit
    * @private
    */
-  async _handleRevisionSelectionError() {
+  async _handleRevisionSelectionError(error) {
     try {
       console.log('\n' + formatter.formatStatus('What would you like to do next?', 'info', '🤔'));
       
@@ -413,7 +413,7 @@ export class RollbackCommand {
    * @returns {Promise<boolean>} True if should retry, false if should exit
    * @private
    */
-  async _handleServiceSelectionError() {
+  async _handleServiceSelectionError(error) {
     try {
       console.log('\n' + formatter.formatStatus('What would you like to do next?', 'info', '🤔'));
       
@@ -445,7 +445,7 @@ export class RollbackCommand {
    * @returns {Promise<boolean>} True if should retry, false if should exit
    * @private
    */
-  async _handleClusterSelectionError() {
+  async _handleClusterSelectionError(error) {
     try {
       console.log('\n' + formatter.formatStatus('What would you like to do next?', 'info', '🤔'));
       
