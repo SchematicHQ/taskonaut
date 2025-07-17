@@ -22,7 +22,7 @@ export default {
     [
       "@semantic-release/git",
       {
-        assets: ["CHANGELOG.md", "package.json", "package-lock.json"],
+        assets: ["CHANGELOG.md"],
       },
     ],
     "@semantic-release/github",
