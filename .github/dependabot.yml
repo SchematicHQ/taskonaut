@@ -9,6 +9,8 @@ updates:
     labels:
       - "npm"
       - "Dependabot"
+    assignees:
+      - "mhmdio"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -16,3 +18,5 @@ updates:
     labels:
       - "github-actions"
       - "Dependabot"
+    assignees:
+      - "mhmdio"
