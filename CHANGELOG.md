@@ -1,11 +1,18 @@
-## [1.7.2](https://github.com/schematichq/taskonaut/compare/v1.7.1...v1.7.2) (2025-09-24)
+## [1.7.3](https://github.com/schematichq/taskonaut/compare/v1.7.2...v1.7.3) (2025-10-21)
 
 
 ### Bug Fixes
 
-* correct npm audit command in release workflow ([95c3f26](https://github.com/schematichq/taskonaut/commit/95c3f2642c55f70a1c65b221e59c789a0754a906))
-* force bump versions ([b479250](https://github.com/schematichq/taskonaut/commit/b479250007c53e06eecbc017e11661522960140f))
-* regenerate package-lock.json to fix npm ci sync issue ([88f7434](https://github.com/schematichq/taskonaut/commit/88f743473d98bf4034c6d667e81c24991f17b487))
+* replace npm ci with npm install in release workflow ([beca375](https://github.com/schematichq/taskonaut/commit/beca3755b8483485b4db34a6573e1df374ddc10b))
+* standardize formatting in codeql.yml workflow ([d62a373](https://github.com/schematichq/taskonaut/commit/d62a373f13e47362e4dea4ddd0517bb862d42776))
+
+## [1.7.2](https://github.com/schematichq/taskonaut/compare/v1.7.1...v1.7.2) (2025-09-24)
+
+### Bug Fixes
+
+- correct npm audit command in release workflow ([95c3f26](https://github.com/schematichq/taskonaut/commit/95c3f2642c55f70a1c65b221e59c789a0754a906))
+- force bump versions ([b479250](https://github.com/schematichq/taskonaut/commit/b479250007c53e06eecbc017e11661522960140f))
+- regenerate package-lock.json to fix npm ci sync issue ([88f7434](https://github.com/schematichq/taskonaut/commit/88f743473d98bf4034c6d667e81c24991f17b487))
 
 ## [1.7.1](https://github.com/schematichq/taskonaut/compare/v1.7.0...v1.7.1) (2025-07-17)
 
