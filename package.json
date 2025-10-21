@@ -1,7 +1,7 @@
 {
   "name": "@schematichq/taskonaut",
   "type": "module",
-  "version": "0.0.1-development",
+  "version": "1.9.0",
   "description": "Interactive CLI tool for exec into AWS ECS tasks (containers) - from [SchematicHQ](https://schematichq.com)",
   "main": "index.js",
   "bin": {

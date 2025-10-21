@@ -1,9 +1,15 @@
-# [1.8.0](https://github.com/schematichq/taskonaut/compare/v1.7.3...v1.8.0) (2025-10-21)
-
+## [1.9.0](https://github.com/SchematicHQ/taskonaut/compare/v1.8.0...v1.9.0) (2025-10-21)
 
 ### Features
 
-* added ability to type task name to navigate faster ([#281](https://github.com/schematichq/taskonaut/issues/281)) ([f0cf823](https://github.com/schematichq/taskonaut/commit/f0cf8236e5759deb9d916f3bca119192dcc5de82))
+* add conventional changelog support ([fe56502](https://github.com/SchematicHQ/taskonaut/commit/fe56502d1b97eb04900c83162130877822100cfb))
+* add semantic release configuration ([81bd8b0](https://github.com/SchematicHQ/taskonaut/commit/81bd8b0a401b6f63f0095ac1c07fe35df6cc7bbf))
+
+# [1.8.0](https://github.com/schematichq/taskonaut/compare/v1.7.3...v1.8.0) (2025-10-21)
+
+### Features
+
+- added ability to type task name to navigate faster ([#281](https://github.com/schematichq/taskonaut/issues/281)) ([f0cf823](https://github.com/schematichq/taskonaut/commit/f0cf8236e5759deb9d916f3bca119192dcc5de82))
 
 ## [1.7.3](https://github.com/schematichq/taskonaut/compare/v1.7.2...v1.7.3) (2025-10-21)
 
