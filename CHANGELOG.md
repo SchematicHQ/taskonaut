@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/schematichq/taskonaut/compare/v1.7.3...v1.8.0) (2025-10-21)
+
+
+### Features
+
+* added ability to type task name to navigate faster ([#281](https://github.com/schematichq/taskonaut/issues/281)) ([f0cf823](https://github.com/schematichq/taskonaut/commit/f0cf8236e5759deb9d916f3bca119192dcc5de82))
+
 ## [1.7.3](https://github.com/schematichq/taskonaut/compare/v1.7.2...v1.7.3) (2025-10-21)
 
 ### Bug Fixes
