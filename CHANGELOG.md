@@ -1,10 +1,9 @@
 ## [1.7.3](https://github.com/schematichq/taskonaut/compare/v1.7.2...v1.7.3) (2025-10-21)
 
-
 ### Bug Fixes
 
-* replace npm ci with npm install in release workflow ([beca375](https://github.com/schematichq/taskonaut/commit/beca3755b8483485b4db34a6573e1df374ddc10b))
-* standardize formatting in codeql.yml workflow ([d62a373](https://github.com/schematichq/taskonaut/commit/d62a373f13e47362e4dea4ddd0517bb862d42776))
+- replace npm ci with npm install in release workflow ([beca375](https://github.com/schematichq/taskonaut/commit/beca3755b8483485b4db34a6573e1df374ddc10b))
+- standardize formatting in codeql.yml workflow ([d62a373](https://github.com/schematichq/taskonaut/commit/d62a373f13e47362e4dea4ddd0517bb862d42776))
 
 ## [1.7.2](https://github.com/schematichq/taskonaut/compare/v1.7.1...v1.7.2) (2025-09-24)
 
