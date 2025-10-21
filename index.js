@@ -87,7 +87,7 @@ const AWS_REGIONS = [
   "me-south-1",
   "me-central-1",
   "us-gov-east-1",
-  "us-gov-west-1"
+  "us-gov-west-1",
 ];
 
 export { AWS_REGIONS };
@@ -321,29 +321,38 @@ async function selectCluster(ecs) {
     return b.tasksCount - a.tasksCount;
   });
 
-  const clusterChoices = sortedClusters.map(c => {
+  const clusterChoices = sortedClusters.map((c) => {
     const hasActiveTasks = c.tasksCount > 0;
-    const taskInfo = hasActiveTasks 
-      ? chalk.green(`${c.tasksCount} tasks`) 
+    const taskInfo = hasActiveTasks
+      ? chalk.green(`${c.tasksCount} tasks`)
       : chalk.gray(`${c.tasksCount} tasks`);
-    
-    const status = hasActiveTasks 
-      ? chalk.green("● Active") 
+
+    const status = hasActiveTasks
+      ? chalk.green("● Active")
       : chalk.gray("○ Empty");
-    
+
     return {
       title: `${chalk.bold(c.clusterName)} ${status}`,
       description: `Services: ${c.servicesCount}, Tasks: ${taskInfo}, Instances: ${c.containerInstancesCount}`,
-      value: c.clusterName
+      value: c.clusterName,
     };
   });
 
   const clusterResponse = await prompts({
-    type: 'select',
-    name: 'cluster',
-    message: chalk.blue('Select ECS cluster:'),
+    type: "autocomplete",
+    name: "cluster",
+    message: chalk.blue("Select ECS cluster:"),
     choices: clusterChoices,
-    hint: '- Clusters with active tasks are shown first'
+    hint: "- Type to search, use arrows to navigate",
+    suggest: (input, choices) => {
+      const inputLower = input.toLowerCase();
+      return choices.filter(
+        (choice) =>
+          choice.title.toLowerCase().includes(inputLower) ||
+          (choice.description &&
+            choice.description.toLowerCase().includes(inputLower)),
+      );
+    },
   });
 
   if (!clusterResponse.cluster) {
@@ -368,17 +377,25 @@ async function selectTask(ecs, cluster, allowBack = false) {
 
     if (!taskArns || taskArns.length === 0) {
       spinner.warn("No tasks found in cluster");
-      
+
       if (allowBack) {
-        logger.info(chalk.blue("💡 This cluster has no running tasks. You can:"));
+        logger.info(
+          chalk.blue("💡 This cluster has no running tasks. You can:"),
+        );
         logger.info(chalk.dim("   • Go back and select a different cluster"));
-        logger.info(chalk.dim("   • Check if tasks are running in the AWS Console"));
-        logger.info(chalk.dim("   • Verify you have the correct AWS profile/region selected"));
-        
+        logger.info(
+          chalk.dim("   • Check if tasks are running in the AWS Console"),
+        );
+        logger.info(
+          chalk.dim(
+            "   • Verify you have the correct AWS profile/region selected",
+          ),
+        );
+
         const actionResponse = await prompts({
-          type: 'select',
-          name: 'action',
-          message: chalk.blue('What would you like to do?'),
+          type: "select",
+          name: "action",
+          message: chalk.blue("What would you like to do?"),
           choices: [
             {
               title: chalk.blue("← Go Back to Cluster Selection"),
@@ -390,17 +407,17 @@ async function selectTask(ecs, cluster, allowBack = false) {
             },
           ],
         });
-        
+
         if (!actionResponse.action) {
           logger.info(chalk.dim("Operation cancelled"));
           process.exit(0);
         }
-        
+
         if (actionResponse.action === "__EXIT__") {
           logger.info(chalk.dim("Goodbye! 👋"));
           process.exit(0);
         }
-        
+
         return actionResponse.action; // Return "__BACK__"
       } else {
         logger.warn(chalk.yellow("No tasks found in cluster."));
@@ -430,7 +447,7 @@ async function selectTask(ecs, cluster, allowBack = false) {
         ? new Date(task.startedAt).toLocaleString()
         : "N/A";
       return {
-        name: `${chalk.green(taskDefName)} ${chalk.yellow(
+        title: `${chalk.green(taskDefName)} ${chalk.yellow(
           `(ID: ${shortTaskId}, ${task.lastStatus}, started at: ${startedAt})`,
         )}`,
         value: task.taskArn,
@@ -439,24 +456,31 @@ async function selectTask(ecs, cluster, allowBack = false) {
 
     if (allowBack) {
       choices.unshift({
-        name: chalk.blue("← Go Back"),
+        title: chalk.blue("← Go Back"),
         value: "__BACK__",
       });
     }
 
-    const { taskArn } = await inquirer.prompt([
-      {
-        type: "list",
-        name: "taskArn",
-        message: chalk.blue("Select task:"),
-        prefix: "📦",
-        choices,
-        loop: false,
-        pageSize: choices.length,
+    const taskResponse = await prompts({
+      type: "autocomplete",
+      name: "taskArn",
+      message: chalk.blue("📦 Select task:"),
+      choices,
+      hint: "- Type to search, use arrows to navigate",
+      suggest: (input, choices) => {
+        const inputLower = input.toLowerCase();
+        return choices.filter((choice) =>
+          choice.title.toLowerCase().includes(inputLower),
+        );
       },
-    ]);
+    });
 
-    return taskArn;
+    if (!taskResponse.taskArn) {
+      logger.info(chalk.dim("Operation cancelled"));
+      process.exit(0);
+    }
+
+    return taskResponse.taskArn;
   } catch (err) {
     logger.error(chalk.red(err.message));
     throw err;
@@ -509,7 +533,7 @@ async function selectContainer(ecs, cluster, taskArn, allowBack = false) {
     return containers[0].name;
   } else {
     choices = containers.map((container) => ({
-      name: `${chalk.green(container.name)} ${chalk.yellow(
+      title: `${chalk.green(container.name)} ${chalk.yellow(
         `(${container.lastStatus})`,
       )}`,
       value: container.name,
@@ -517,23 +541,32 @@ async function selectContainer(ecs, cluster, taskArn, allowBack = false) {
 
     if (allowBack) {
       choices.unshift({
-        name: chalk.blue("← Go Back"),
+        title: chalk.blue("← Go Back"),
         value: "__BACK__",
       });
     }
   }
 
-  const { containerName } = await inquirer.prompt([
-    {
-      type: "list",
-      name: "containerName",
-      message: chalk.blue("Select container:"),
-      prefix: "🐳",
-      choices,
+  const containerResponse = await prompts({
+    type: "autocomplete",
+    name: "containerName",
+    message: chalk.blue("🐳 Select container:"),
+    choices,
+    hint: "- Type to search, use arrows to navigate",
+    suggest: (input, choices) => {
+      const inputLower = input.toLowerCase();
+      return choices.filter((choice) =>
+        choice.title.toLowerCase().includes(inputLower),
+      );
     },
-  ]);
+  });
 
-  return containerName;
+  if (!containerResponse.containerName) {
+    logger.info(chalk.dim("Operation cancelled"));
+    process.exit(0);
+  }
+
+  return containerResponse.containerName;
 }
 
 /**
@@ -638,7 +671,7 @@ async function listServices(ecs, cluster, quiet = false) {
       const taskDefParts = service.taskDefinition.split("/").pop().split(":");
       const family = taskDefParts[0];
       const revision = parseInt(taskDefParts[1]);
-      
+
       return {
         serviceName: service.serviceName,
         serviceArn: service.serviceArn,
@@ -665,7 +698,9 @@ async function listServices(ecs, cluster, quiet = false) {
  */
 async function listTaskDefinitionRevisions(ecs, family, quiet = false) {
   try {
-    const spinner = quiet ? null : ora("Fetching task definition revisions...").start();
+    const spinner = quiet
+      ? null
+      : ora("Fetching task definition revisions...").start();
     const { taskDefinitionArns } = await ecs.listTaskDefinitions({
       familyPrefix: family,
       status: "ACTIVE",
@@ -692,10 +727,14 @@ async function listTaskDefinitionRevisions(ecs, family, quiet = false) {
             createdAt: taskDefinition.registeredAt,
           };
         } catch (err) {
-          logger.warn(chalk.yellow(`Failed to describe task definition ${arn}: ${err.message}`));
+          logger.warn(
+            chalk.yellow(
+              `Failed to describe task definition ${arn}: ${err.message}`,
+            ),
+          );
           return null;
         }
-      })
+      }),
     );
 
     if (spinner) spinner.succeed("Task definition revisions fetched");
@@ -714,10 +753,15 @@ async function listTaskDefinitionRevisions(ecs, family, quiet = false) {
  * @param {boolean} quiet - Whether to suppress spinner output.
  * @returns {Promise<{current: Object, target: Object, differences: Array}>} Comparison details.
  */
-async function compareTaskDefinitions(ecs, currentArn, targetArn, quiet = false) {
+async function compareTaskDefinitions(
+  ecs,
+  currentArn,
+  targetArn,
+  quiet = false,
+) {
   try {
     const spinner = quiet ? null : ora("Comparing task definitions...").start();
-    
+
     const [currentResponse, targetResponse] = await Promise.all([
       ecs.describeTaskDefinition({ taskDefinition: currentArn }),
       ecs.describeTaskDefinition({ taskDefinition: targetArn }),
@@ -725,24 +769,26 @@ async function compareTaskDefinitions(ecs, currentArn, targetArn, quiet = false)
 
     const current = currentResponse.taskDefinition;
     const target = targetResponse.taskDefinition;
-    
+
     if (spinner) spinner.succeed("Task definitions compared");
 
     // Extract key differences for display
     const differences = [];
-    
+
     // Compare container images
-    const currentImages = current.containerDefinitions.map(c => ({ 
-      name: c.name, 
-      image: c.image 
+    const currentImages = current.containerDefinitions.map((c) => ({
+      name: c.name,
+      image: c.image,
     }));
-    const targetImages = target.containerDefinitions.map(c => ({ 
-      name: c.name, 
-      image: c.image 
+    const targetImages = target.containerDefinitions.map((c) => ({
+      name: c.name,
+      image: c.image,
     }));
-    
-    currentImages.forEach(currentContainer => {
-      const targetContainer = targetImages.find(t => t.name === currentContainer.name);
+
+    currentImages.forEach((currentContainer) => {
+      const targetContainer = targetImages.find(
+        (t) => t.name === currentContainer.name,
+      );
       if (targetContainer && currentContainer.image !== targetContainer.image) {
         differences.push({
           type: "image",
@@ -795,8 +841,6 @@ async function compareTaskDefinitions(ecs, currentArn, targetArn, quiet = false)
   }
 }
 
-
-
 /**
  * Performs the actual service rollback by updating the service.
  * @param {ECS} ecs - AWS ECS client.
@@ -806,10 +850,18 @@ async function compareTaskDefinitions(ecs, currentArn, targetArn, quiet = false)
  * @param {boolean} quiet - Whether to suppress spinner output.
  * @returns {Promise<Object>} Update service response.
  */
-async function performRollback(ecs, cluster, serviceName, taskDefinitionArn, quiet = false) {
+async function performRollback(
+  ecs,
+  cluster,
+  serviceName,
+  taskDefinitionArn,
+  quiet = false,
+) {
   try {
-    const spinner = quiet ? null : ora("Initiating service rollback...").start();
-    
+    const spinner = quiet
+      ? null
+      : ora("Initiating service rollback...").start();
+
     const response = await ecs.updateService({
       cluster,
       service: serviceName,
@@ -942,7 +994,9 @@ const program = new Command();
 
 program
   .name(chalk.cyan("taskonaut"))
-  .description(chalk.yellow("✨ Interactive ECS task executor and rollback tool"))
+  .description(
+    chalk.yellow("✨ Interactive ECS task executor and rollback tool"),
+  )
   .addHelpText("after", chalk.dim("Example: taskonaut "))
   .action(async () => {
     try {
@@ -1102,10 +1156,12 @@ program
   .action(async () => {
     try {
       console.log(chalk.cyan.bold("🔄 ECS Service Rollback"));
-      console.log(chalk.dim("Select a cluster, service, and revision to rollback to.\n"));
+      console.log(
+        chalk.dim("Select a cluster, service, and revision to rollback to.\n"),
+      );
 
       const ecs = await initAWS();
-      
+
       // Step 1: Select cluster
       const clusters = await listClusters(ecs, true); // quiet mode to avoid spinner interference
       if (!clusters || clusters.length === 0) {
@@ -1113,16 +1169,16 @@ program
         return;
       }
 
-      const clusterChoices = clusters.map(c => ({
+      const clusterChoices = clusters.map((c) => ({
         title: `${chalk.green(c.clusterName)} ${chalk.yellow(`(${c.servicesCount} services, ${c.tasksCount} tasks)`)}`,
-        value: c.clusterName
+        value: c.clusterName,
       }));
 
       const clusterResponse = await prompts({
-        type: 'select',
-        name: 'cluster',
-        message: chalk.blue('Select ECS cluster:'),
-        choices: clusterChoices
+        type: "select",
+        name: "cluster",
+        message: chalk.blue("Select ECS cluster:"),
+        choices: clusterChoices,
       });
 
       if (!clusterResponse.cluster) {
@@ -1140,16 +1196,16 @@ program
         return;
       }
 
-      const serviceChoices = services.map(s => ({
+      const serviceChoices = services.map((s) => ({
         title: `${chalk.green(s.serviceName)} ${chalk.yellow(`(${s.taskDefinitionFamily}:${s.revision}, ${s.status}, ${s.runningCount}/${s.desiredCount} tasks)`)}`,
-        value: s
+        value: s,
       }));
 
       const serviceResponse = await prompts({
-        type: 'select',
-        name: 'service',
-        message: chalk.blue('Select ECS service to rollback:'),
-        choices: serviceChoices
+        type: "select",
+        name: "service",
+        message: chalk.blue("Select ECS service to rollback:"),
+        choices: serviceChoices,
       });
 
       if (!serviceResponse.service) {
@@ -1158,13 +1214,23 @@ program
       }
 
       const service = serviceResponse.service;
-      console.log(chalk.green(`🎯 Selected service: ${chalk.bold(service.serviceName)}`));
-      console.log(chalk.dim(`   Current revision: ${service.taskDefinitionFamily}:${service.revision}\n`));
+      console.log(
+        chalk.green(`🎯 Selected service: ${chalk.bold(service.serviceName)}`),
+      );
+      console.log(
+        chalk.dim(
+          `   Current revision: ${service.taskDefinitionFamily}:${service.revision}\n`,
+        ),
+      );
 
       // Step 3: Select target revision
-      const revisions = await listTaskDefinitionRevisions(ecs, service.taskDefinitionFamily, true); // quiet mode
+      const revisions = await listTaskDefinitionRevisions(
+        ecs,
+        service.taskDefinitionFamily,
+        true,
+      ); // quiet mode
       const availableRevisions = revisions
-        .filter(r => r.revision !== service.revision)
+        .filter((r) => r.revision !== service.revision)
         .sort((a, b) => b.revision - a.revision);
 
       if (availableRevisions.length === 0) {
@@ -1172,16 +1238,16 @@ program
         return;
       }
 
-      const revisionChoices = availableRevisions.map(r => ({
+      const revisionChoices = availableRevisions.map((r) => ({
         title: `${chalk.green(`Revision ${r.revision}`)} ${chalk.yellow(`(${r.status}, created: ${new Date(r.createdAt).toLocaleString()})`)}`,
-        value: r
+        value: r,
       }));
 
       const revisionResponse = await prompts({
-        type: 'select',
-        name: 'revision',
-        message: chalk.blue('Select revision to rollback to:'),
-        choices: revisionChoices
+        type: "select",
+        name: "revision",
+        message: chalk.blue("Select revision to rollback to:"),
+        choices: revisionChoices,
       });
 
       if (!revisionResponse.revision) {
@@ -1190,40 +1256,56 @@ program
       }
 
       const targetRevision = revisionResponse.revision;
-      console.log(chalk.green(`📋 Target revision: ${chalk.bold(`${service.taskDefinitionFamily}:${targetRevision.revision}`)}\n`));
+      console.log(
+        chalk.green(
+          `📋 Target revision: ${chalk.bold(`${service.taskDefinitionFamily}:${targetRevision.revision}`)}\n`,
+        ),
+      );
 
       // Step 4: Show comparison between current and target
       const comparison = await compareTaskDefinitions(
         ecs,
         service.taskDefinition,
         targetRevision.taskDefinition,
-        true // quiet mode
+        true, // quiet mode
       );
 
       // Display comparison details
       console.log(chalk.blue.bold("🔍 Rollback Preview:"));
       console.log(chalk.dim("─".repeat(60)));
-      
+
       console.log(chalk.yellow("Current (will be replaced):"));
       console.log(`  📦 Revision: ${chalk.bold(comparison.current.revision)}`);
-      console.log(`  📅 Created: ${chalk.dim(new Date(comparison.current.createdAt).toLocaleString())}`);
-      if (comparison.current.cpu) console.log(`  💻 CPU: ${comparison.current.cpu}`);
-      if (comparison.current.memory) console.log(`  🧠 Memory: ${comparison.current.memory}`);
+      console.log(
+        `  📅 Created: ${chalk.dim(new Date(comparison.current.createdAt).toLocaleString())}`,
+      );
+      if (comparison.current.cpu)
+        console.log(`  💻 CPU: ${comparison.current.cpu}`);
+      if (comparison.current.memory)
+        console.log(`  🧠 Memory: ${comparison.current.memory}`);
       if (comparison.current.images && comparison.current.images.length > 0) {
-        comparison.current.images.forEach(img => {
-          const imageTag = img.image.includes(':') ? img.image.split(':').pop() : 'latest';
+        comparison.current.images.forEach((img) => {
+          const imageTag = img.image.includes(":")
+            ? img.image.split(":").pop()
+            : "latest";
           console.log(`  🐳 ${chalk.cyan(img.name)}: ${chalk.dim(imageTag)}`);
         });
       }
-      
+
       console.log(chalk.green("\nTarget (rollback to):"));
       console.log(`  📦 Revision: ${chalk.bold(comparison.target.revision)}`);
-      console.log(`  📅 Created: ${chalk.dim(new Date(comparison.target.createdAt).toLocaleString())}`);
-      if (comparison.target.cpu) console.log(`  💻 CPU: ${comparison.target.cpu}`);
-      if (comparison.target.memory) console.log(`  🧠 Memory: ${comparison.target.memory}`);
+      console.log(
+        `  📅 Created: ${chalk.dim(new Date(comparison.target.createdAt).toLocaleString())}`,
+      );
+      if (comparison.target.cpu)
+        console.log(`  💻 CPU: ${comparison.target.cpu}`);
+      if (comparison.target.memory)
+        console.log(`  🧠 Memory: ${comparison.target.memory}`);
       if (comparison.target.images && comparison.target.images.length > 0) {
-        comparison.target.images.forEach(img => {
-          const imageTag = img.image.includes(':') ? img.image.split(':').pop() : 'latest';
+        comparison.target.images.forEach((img) => {
+          const imageTag = img.image.includes(":")
+            ? img.image.split(":").pop()
+            : "latest";
           console.log(`  🐳 ${chalk.cyan(img.name)}: ${chalk.dim(imageTag)}`);
         });
       }
@@ -1231,7 +1313,7 @@ program
       // Show container image differences
       if (comparison.differences.length > 0) {
         console.log(chalk.red.bold("\n⚠️  Changes detected:"));
-        comparison.differences.forEach(diff => {
+        comparison.differences.forEach((diff) => {
           switch (diff.type) {
             case "image":
               console.log(`  🐳 ${chalk.yellow(diff.container)}:`);
@@ -1239,23 +1321,31 @@ program
               console.log(`     Target:  ${chalk.green(diff.target)}`);
               break;
             case "cpu":
-              console.log(`  💻 CPU: ${chalk.red(diff.current)} → ${chalk.green(diff.target)}`);
+              console.log(
+                `  💻 CPU: ${chalk.red(diff.current)} → ${chalk.green(diff.target)}`,
+              );
               break;
             case "memory":
-              console.log(`  🧠 Memory: ${chalk.red(diff.current)} → ${chalk.green(diff.target)}`);
+              console.log(
+                `  🧠 Memory: ${chalk.red(diff.current)} → ${chalk.green(diff.target)}`,
+              );
               break;
           }
         });
       } else {
-        console.log(chalk.blue("\n✨ No significant changes detected between revisions"));
+        console.log(
+          chalk.blue("\n✨ No significant changes detected between revisions"),
+        );
       }
 
       // Step 5: Confirm rollback
       const confirmResponse = await prompts({
-        type: 'confirm',
-        name: 'confirm',
-        message: chalk.yellow(`⚠️  Proceed with rollback? (${service.revision} → ${targetRevision.revision})`),
-        initial: false
+        type: "confirm",
+        name: "confirm",
+        message: chalk.yellow(
+          `⚠️  Proceed with rollback? (${service.revision} → ${targetRevision.revision})`,
+        ),
+        initial: false,
       });
 
       if (!confirmResponse.confirm) {
@@ -1265,26 +1355,39 @@ program
 
       // Step 6: Perform rollback
       console.log(chalk.blue("🚀 Starting rollback..."));
-      
+
       const rollbackResponse = await performRollback(
         ecs,
         cluster,
         service.serviceName,
         targetRevision.taskDefinition,
-        true // quiet mode
+        true, // quiet mode
       );
 
       // Step 7: Show rollback status
       console.log(chalk.green.bold("\n✅ Rollback initiated successfully!"));
       console.log(chalk.dim("─".repeat(50)));
       console.log(`🎯 Service: ${chalk.bold(service.serviceName)}`);
-      console.log(`📦 Task Definition: ${chalk.bold(targetRevision.taskDefinition)}`);
-      console.log(`🔄 Deployment ID: ${chalk.dim(rollbackResponse.service.deployments[0]?.id || "N/A")}`);
-      console.log(`📊 Status: ${chalk.yellow(rollbackResponse.service.deployments[0]?.status || "N/A")}`);
-      
-      console.log(chalk.blue("\n💡 Pro tip: Monitor the deployment in the AWS Console or use AWS CLI to check status:"));
-      console.log(chalk.dim(`   aws ecs describe-services --cluster ${cluster} --services ${service.serviceName}`));
-      
+      console.log(
+        `📦 Task Definition: ${chalk.bold(targetRevision.taskDefinition)}`,
+      );
+      console.log(
+        `🔄 Deployment ID: ${chalk.dim(rollbackResponse.service.deployments[0]?.id || "N/A")}`,
+      );
+      console.log(
+        `📊 Status: ${chalk.yellow(rollbackResponse.service.deployments[0]?.status || "N/A")}`,
+      );
+
+      console.log(
+        chalk.blue(
+          "\n💡 Pro tip: Monitor the deployment in the AWS Console or use AWS CLI to check status:",
+        ),
+      );
+      console.log(
+        chalk.dim(
+          `   aws ecs describe-services --cluster ${cluster} --services ${service.serviceName}`,
+        ),
+      );
     } catch (err) {
       console.error(chalk.red("Rollback failed: " + err.message));
       process.exit(1);

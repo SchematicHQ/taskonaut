@@ -130,6 +130,7 @@ The rollback feature allows you to safely revert ECS services to previous task d
 ### AWS Rollback Mechanism
 
 taskonaut uses AWS ECS's native rollback capability by calling `updateService` with a previous task definition ARN. This is the same mechanism used by:
+
 - AWS Console's "Update Service" → "Revision" selection
 - AWS CLI's `aws ecs update-service --task-definition previous-revision`
 - AWS SDKs and CloudFormation rollbacks
@@ -155,14 +156,16 @@ taskonaut rollback
 > **Task Definition Retention**: To enable rollback functionality, your infrastructure should retain old task definition revisions. If using Pulumi, Terraform, or similar IaC tools, configure:
 
 **Pulumi:**
+
 ```typescript
 const taskDefinition = new aws.ecs.TaskDefinition("my-task", {
-    // ... other configuration
-    skipDestroy: true  // Retains old revisions when updating
+  // ... other configuration
+  skipDestroy: true, // Retains old revisions when updating
 });
 ```
 
 **Terraform:**
+
 ```hcl
 resource "aws_ecs_task_definition" "my_task" {
   # ... other configuration
@@ -174,6 +177,7 @@ resource "aws_ecs_task_definition" "my_task" {
 ```
 
 **Why This Matters:**
+
 - Without `skipDestroy: true`, old task definition revisions are deleted during updates
 - Rollback requires access to previous revisions (AWS keeps them for 1 year by default)
 - This setting ensures your rollback history is preserved for operational safety
@@ -182,7 +186,7 @@ resource "aws_ecs_task_definition" "my_task" {
 
 - **Multiple Confirmations** - Prevents accidental rollbacks
 - **Detailed Previews** - Shows exactly what will change
-- **Container Image Tracking** - Displays image tags for easy identification  
+- **Container Image Tracking** - Displays image tags for easy identification
 - **Deployment Monitoring** - Provides AWS CLI commands for status tracking
 - **Graceful Cancellation** - Cancel at any step without changes
 
