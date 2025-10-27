@@ -1,7 +1,7 @@
 {
   "name": "@schematichq/taskonaut",
   "type": "module",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "description": "Interactive CLI tool for exec into AWS ECS tasks (containers), rollback services to previous task definition revisions, and clean up unused task definitions - from [SchematicHQ](https://schematichq.com)",
   "main": "index.js",
   "bin": {

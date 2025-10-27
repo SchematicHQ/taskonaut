@@ -1,8 +1,15 @@
+## [1.10.1](https://github.com/SchematicHQ/taskonaut/compare/v1.10.0...v1.10.1) (2025-10-27)
+
+### Maintenance
+
+* **deps:** bump @aws-sdk/credential-providers from 3.913.0 to 3.916.0 ([#286](https://github.com/SchematicHQ/taskonaut/issues/286)) ([2319696](https://github.com/SchematicHQ/taskonaut/commit/23196965200c1e1d5040b139aaa96a5c236e42e7))
+* **deps:** bump ini from 5.0.0 to 6.0.0 ([#284](https://github.com/SchematicHQ/taskonaut/issues/284)) ([7345ab6](https://github.com/SchematicHQ/taskonaut/commit/7345ab63b3a2f3a80ff29d1f07870c8668aa40b2))
+
 ## [1.10.0](https://github.com/SchematicHQ/taskonaut/compare/v1.9.0...v1.10.0) (2025-10-27)
 
 ### Features
 
-* prune ([316c6b0](https://github.com/SchematicHQ/taskonaut/commit/316c6b0bda4bfcfb17effa87eccb35645637bfbb))
+- prune ([316c6b0](https://github.com/SchematicHQ/taskonaut/commit/316c6b0bda4bfcfb17effa87eccb35645637bfbb))
 
 ## [1.9.0](https://github.com/SchematicHQ/taskonaut/compare/v1.8.0...v1.9.0) (2025-10-21)
 
