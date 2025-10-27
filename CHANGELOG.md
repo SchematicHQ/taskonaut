@@ -1,9 +1,15 @@
+## [1.10.0](https://github.com/SchematicHQ/taskonaut/compare/v1.9.0...v1.10.0) (2025-10-27)
+
+### Features
+
+* prune ([316c6b0](https://github.com/SchematicHQ/taskonaut/commit/316c6b0bda4bfcfb17effa87eccb35645637bfbb))
+
 ## [1.9.0](https://github.com/SchematicHQ/taskonaut/compare/v1.8.0...v1.9.0) (2025-10-21)
 
 ### Features
 
-* add conventional changelog support ([fe56502](https://github.com/SchematicHQ/taskonaut/commit/fe56502d1b97eb04900c83162130877822100cfb))
-* add semantic release configuration ([81bd8b0](https://github.com/SchematicHQ/taskonaut/commit/81bd8b0a401b6f63f0095ac1c07fe35df6cc7bbf))
+- add conventional changelog support ([fe56502](https://github.com/SchematicHQ/taskonaut/commit/fe56502d1b97eb04900c83162130877822100cfb))
+- add semantic release configuration ([81bd8b0](https://github.com/SchematicHQ/taskonaut/commit/81bd8b0a401b6f63f0095ac1c07fe35df6cc7bbf))
 
 # [1.8.0](https://github.com/schematichq/taskonaut/compare/v1.7.3...v1.8.0) (2025-10-21)
 
