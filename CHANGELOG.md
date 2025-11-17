@@ -1,9 +1,17 @@
+## [1.10.3](https://github.com/SchematicHQ/taskonaut/compare/v1.10.2...v1.10.3) (2025-11-17)
+
+### Maintenance
+
+* **deps:** update AWS SDK and other dependencies ([47a74b8](https://github.com/SchematicHQ/taskonaut/commit/47a74b81165aab7097acffb70e4180dda2973aff))
+* update AWS SDK and other dependencies ([904d69a](https://github.com/SchematicHQ/taskonaut/commit/904d69ae67efdd6c03fde02f020731dd8c6d9a4b))
+* update AWS SDK and other dependencies ([7c5412e](https://github.com/SchematicHQ/taskonaut/commit/7c5412e26cc7ec1dcba9533e30d2e397f28f2ef9))
+
 ## [1.10.2](https://github.com/SchematicHQ/taskonaut/compare/v1.10.1...v1.10.2) (2025-10-27)
 
 ### Maintenance
 
-* **deps:** bump @aws-sdk/client-ecs from 3.913.0 to 3.917.0 ([#289](https://github.com/SchematicHQ/taskonaut/issues/289)) ([edf1124](https://github.com/SchematicHQ/taskonaut/commit/edf1124ecf1cf5911c53d51e90a9d2e408a85994))
-* **deps:** bump commander from 14.0.1 to 14.0.2 ([#288](https://github.com/SchematicHQ/taskonaut/issues/288)) ([a43539c](https://github.com/SchematicHQ/taskonaut/commit/a43539c13563c2b3f2c4768a2f7856e69688fbb9))
+- **deps:** bump @aws-sdk/client-ecs from 3.913.0 to 3.917.0 ([#289](https://github.com/SchematicHQ/taskonaut/issues/289)) ([edf1124](https://github.com/SchematicHQ/taskonaut/commit/edf1124ecf1cf5911c53d51e90a9d2e408a85994))
+- **deps:** bump commander from 14.0.1 to 14.0.2 ([#288](https://github.com/SchematicHQ/taskonaut/issues/288)) ([a43539c](https://github.com/SchematicHQ/taskonaut/commit/a43539c13563c2b3f2c4768a2f7856e69688fbb9))
 
 ## [1.10.1](https://github.com/SchematicHQ/taskonaut/compare/v1.10.0...v1.10.1) (2025-10-27)
 
