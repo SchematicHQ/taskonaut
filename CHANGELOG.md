@@ -1,10 +1,17 @@
+## [1.10.4](https://github.com/SchematicHQ/taskonaut/compare/v1.10.3...v1.10.4) (2025-11-20)
+
+### Maintenance
+
+* **deps-dev:** bump js-yaml from 3.14.1 to 3.14.2 ([#319](https://github.com/SchematicHQ/taskonaut/issues/319)) ([79a5422](https://github.com/SchematicHQ/taskonaut/commit/79a5422a1846a18dee1ab2992ab3796c55d97e8d))
+* **deps:** bump actions/checkout from 5.0.0 to 5.0.1 ([#320](https://github.com/SchematicHQ/taskonaut/issues/320)) ([9200f26](https://github.com/SchematicHQ/taskonaut/commit/9200f2644e3644665a94eec1449e889289df805d))
+
 ## [1.10.3](https://github.com/SchematicHQ/taskonaut/compare/v1.10.2...v1.10.3) (2025-11-17)
 
 ### Maintenance
 
-* **deps:** update AWS SDK and other dependencies ([47a74b8](https://github.com/SchematicHQ/taskonaut/commit/47a74b81165aab7097acffb70e4180dda2973aff))
-* update AWS SDK and other dependencies ([904d69a](https://github.com/SchematicHQ/taskonaut/commit/904d69ae67efdd6c03fde02f020731dd8c6d9a4b))
-* update AWS SDK and other dependencies ([7c5412e](https://github.com/SchematicHQ/taskonaut/commit/7c5412e26cc7ec1dcba9533e30d2e397f28f2ef9))
+- **deps:** update AWS SDK and other dependencies ([47a74b8](https://github.com/SchematicHQ/taskonaut/commit/47a74b81165aab7097acffb70e4180dda2973aff))
+- update AWS SDK and other dependencies ([904d69a](https://github.com/SchematicHQ/taskonaut/commit/904d69ae67efdd6c03fde02f020731dd8c6d9a4b))
+- update AWS SDK and other dependencies ([7c5412e](https://github.com/SchematicHQ/taskonaut/commit/7c5412e26cc7ec1dcba9533e30d2e397f28f2ef9))
 
 ## [1.10.2](https://github.com/SchematicHQ/taskonaut/compare/v1.10.1...v1.10.2) (2025-10-27)
 
