@@ -81,7 +81,7 @@
     "@semantic-release/git": "^10.0.1",
     "@semantic-release/npm": "^13.1.2",
     "commitizen": "^4.3.1",
-    "conventional-changelog-conventionalcommits": "^9.1.0",
+    "conventional-changelog-conventionalcommits": "^9.2.0",
     "cz-conventional-changelog": "^3.3.0",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
