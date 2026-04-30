@@ -59,7 +59,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-ecs": "^3.1039.0",
-    "@aws-sdk/credential-providers": "^3.1032.0",
+    "@aws-sdk/credential-providers": "^3.1039.0",
     "chalk": "^5.6.2",
     "commander": "^14.0.3",
     "conf": "^15.1.0",
