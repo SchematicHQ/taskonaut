@@ -529,7 +529,7 @@ async function selectContainer(ecs, cluster, taskArn, allowBack = false) {
   const containers = task.containers;
   spinner.succeed("Container details fetched");
 
-  let choices = [];
+  let choices;
 
   if (containers.length === 1 && !allowBack) {
     logger.info(chalk.dim("Single container detected, auto-selecting..."));
@@ -939,7 +939,7 @@ async function fetchAllTaskDefinitions(ecs, params = {}, spinner = null) {
       if (err.name === 'ThrottlingException' || err.message.includes('Rate exceeded')) {
         retryCount++;
         if (retryCount > maxRetries) {
-          throw new Error(`Rate limit exceeded after ${maxRetries} retries. Please try again later.`);
+          throw new Error(`Rate limit exceeded after ${maxRetries} retries. Please try again later.`, { cause: err });
         }
 
         // Exponential backoff: 1s, 2s, 4s, 8s, 16s
@@ -1185,7 +1185,7 @@ async function analyzeTaskDefinitionRevisions(ecs, family, cluster = null, quiet
           if (err.name === 'ThrottlingException' || err.message.includes('Rate exceeded')) {
             retryCount++;
             if (retryCount > maxRetries) {
-              throw new Error(`Rate limit exceeded after ${maxRetries} retries on batch ${i / BATCH_SIZE + 1}. Please try again later.`);
+              throw new Error(`Rate limit exceeded after ${maxRetries} retries on batch ${i / BATCH_SIZE + 1}. Please try again later.`, { cause: err });
             }
 
             // Exponential backoff
@@ -1379,7 +1379,7 @@ async function selectRevisionsToDelete(revisions) {
     return [];
   }
 
-  let selected = [];
+  let selected;
 
   switch (methodResponse.method) {
     case "inactive_beyond_5":
@@ -1464,7 +1464,7 @@ async function selectRevisionsToDelete(revisions) {
         const date = new Date(rev.createdAt).toLocaleDateString();
         const size = (rev.size / 1024).toFixed(1);
 
-        let statusBadge = "";
+        let statusBadge;
         let reasonBadge = "";
 
         if (rev.isInLatest5) {
