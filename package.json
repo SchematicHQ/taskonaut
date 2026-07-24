@@ -78,7 +78,7 @@
     "@eslint/js": "^10.0.1",
     "@jest/globals": "^30.4.1",
     "@semantic-release/changelog": "^7.0.0",
-    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/git": "^11.0.0",
     "@semantic-release/npm": "^13.1.5",
     "commitizen": "^4.3.2",
     "conventional-changelog-conventionalcommits": "^10.2.1",
