@@ -6,6 +6,8 @@ updates:
       - "/"
     schedule:
       interval: "daily"
+    cooldown:
+      default-days: 7
     labels:
       - "npm"
       - "Dependabot"
@@ -15,6 +17,8 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+    cooldown:
+      default-days: 7
     labels:
       - "github-actions"
       - "Dependabot"
