@@ -35,7 +35,7 @@ Interactive CLI tool for exec into AWS ECS tasks (containers), rollback services
 > [!WARNING]
 > Make sure you have met the [Amazon ECS Exec prerequisites](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/ecs-exec.html#ecs-exec-prereq).
 
-- Node.js 18+
+- Node.js 22+
 - AWS CLI v2
 - AWS Session Manager Plugin
 - AWS credentials configured (supports AWS SSO, access keys, etc.)

@@ -55,7 +55,7 @@
   },
   "homepage": "https://github.com/SchematicHQ/taskonaut#readme",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "dependencies": {
     "@aws-sdk/client-ecs": "^3.1098.0",
