@@ -28,6 +28,7 @@ dotenv.config({
 // ---------------------------------------------------------------------------
 const config = new Conf({
   projectName: "taskonaut",
+  encryptionKey: `taskonaut-${os.hostname()}-${os.userInfo().username}`,
   schema: {
     awsProfile: {
       type: "string",
