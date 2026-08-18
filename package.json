@@ -83,7 +83,7 @@
     "commitizen": "^4.3.2",
     "conventional-changelog-conventionalcommits": "^10.2.1",
     "cz-conventional-changelog": "^3.3.0",
-    "eslint": "^10.8.0",
+    "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
     "globals": "^17.9.0",
