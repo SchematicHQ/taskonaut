@@ -1,9 +1,11 @@
+## [1.10.6](https://github.com/SchematicHQ/taskonaut/compare/v1.10.5...v1.10.6) (2026-08-19)
+
 ## [1.10.5](https://github.com/SchematicHQ/taskonaut/compare/v1.10.4...v1.10.5) (2025-11-24)
 
 ### Maintenance
 
-* **deps:** bump actions/checkout from 5.0.1 to 6.0.0 ([#327](https://github.com/SchematicHQ/taskonaut/issues/327)) ([33beb35](https://github.com/SchematicHQ/taskonaut/commit/33beb35acc53e3f6e6dcd417d8c70e4f71b0a45b))
-* update AWS SDK dependencies to latest versions ([2465ad2](https://github.com/SchematicHQ/taskonaut/commit/2465ad25a328bf4bdd89ad92e27b28d86cfb503f))
+- **deps:** bump actions/checkout from 5.0.1 to 6.0.0 ([#327](https://github.com/SchematicHQ/taskonaut/issues/327)) ([33beb35](https://github.com/SchematicHQ/taskonaut/commit/33beb35acc53e3f6e6dcd417d8c70e4f71b0a45b))
+- update AWS SDK dependencies to latest versions ([2465ad2](https://github.com/SchematicHQ/taskonaut/commit/2465ad25a328bf4bdd89ad92e27b28d86cfb503f))
 
 ## [1.10.4](https://github.com/SchematicHQ/taskonaut/compare/v1.10.3...v1.10.4) (2025-11-20)
 
