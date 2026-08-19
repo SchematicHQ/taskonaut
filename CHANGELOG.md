@@ -1,3 +1,5 @@
+## [1.10.7](https://github.com/SchematicHQ/taskonaut/compare/v1.10.6...v1.10.7) (2026-08-19)
+
 ## [1.10.6](https://github.com/SchematicHQ/taskonaut/compare/v1.10.5...v1.10.6) (2026-08-19)
 
 ## [1.10.5](https://github.com/SchematicHQ/taskonaut/compare/v1.10.4...v1.10.5) (2025-11-24)
