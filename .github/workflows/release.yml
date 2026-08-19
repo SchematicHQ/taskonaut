@@ -11,6 +11,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  id-token: write
 
 jobs:
   release:
@@ -20,6 +21,7 @@ jobs:
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: lts/*
+          registry-url: "https://registry.npmjs.org"
       - run: npm install
       - run: npm run lint
       - run: npm run format
@@ -28,5 +30,7 @@ jobs:
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Disable npm provenance attestation: it requires a GitHub-hosted
+          # runner and we use a self-hosted RunsOn runner. OIDC auth still works.
+          NPM_CONFIG_PROVENANCE: "false"
         run: npm run semantic-release
