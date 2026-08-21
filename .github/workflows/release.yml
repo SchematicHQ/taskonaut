@@ -15,6 +15,9 @@ permissions:
 
 jobs:
   release:
+    # Skip releases for chore(*) merges (dependabot bumps, release commits).
+    # These ride along with the next real feat/fix release instead.
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(') || github.event_name == 'workflow_dispatch' }}
     runs-on: runs-on=${{ github.run_id }}/runner=1cpu-linux-arm64
     steps:
       - uses: actions/checkout@v7.0.1
