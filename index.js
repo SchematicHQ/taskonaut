@@ -1925,7 +1925,7 @@ program
 
           const { profile } = await inquirer.prompt([
             {
-              type: "list",
+              type: "select",
               name: "profile",
               message: chalk.blue("Select AWS Profile:"),
               prefix: "🔑",
@@ -1939,7 +1939,7 @@ program
 
           const { region } = await inquirer.prompt([
             {
-              type: "list",
+              type: "select",
               name: "region",
               message: chalk.blue("Select AWS Region:"),
               prefix: "🌎",
