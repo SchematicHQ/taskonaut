@@ -15,7 +15,6 @@ import { spawn, execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { pathToFileURL } from "node:url";
 import ini from "ini";
 
 // Resolved lazily so importing this module (e.g. from tests) has no side effects.
@@ -3105,13 +3104,25 @@ program
 
 /**
  * True when this file was executed directly rather than imported.
+ *
+ * npm installs the bin as a symlink (…/bin/taskonaut -> …/index.js) and Node
+ * resolves symlinks when building import.meta.url, so process.argv[1] is the
+ * link path while import.meta.filename is its target. Comparing the two
+ * directly reports false for every global install, which silently skips
+ * program.parse() and makes the CLI a no-op. Resolve argv[1] before comparing.
+ *
  * @returns {boolean}
  */
 function isMainModule() {
-  return (
-    process.argv[1] !== undefined &&
-    import.meta.url === pathToFileURL(process.argv[1]).href
-  );
+  const entry = process.argv[1];
+  if (!entry) return false;
+
+  try {
+    return fs.realpathSync(entry) === import.meta.filename;
+  } catch {
+    // argv[1] is not a resolvable path (e.g. an eval context).
+    return false;
+  }
 }
 
 if (isMainModule()) {

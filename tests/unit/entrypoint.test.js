@@ -1,0 +1,68 @@
+import { describe, expect, test, afterAll } from "@jest/globals";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const indexPath = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../index.js",
+);
+const { version } = JSON.parse(
+  fs.readFileSync(
+    path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../package.json",
+    ),
+    "utf-8",
+  ),
+);
+
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "taskonaut-entrypoint-"));
+
+afterAll(() => {
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+/** Runs the CLI and returns trimmed stdout. */
+function run(entry, args) {
+  return execFileSync(process.execPath, [entry, ...args], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+describe("CLI entrypoint", () => {
+  test("runs when invoked directly", () => {
+    expect(run(indexPath, ["--version"])).toBe(version);
+  });
+
+  test("runs when invoked through a symlink", () => {
+    // Regression: npm installs the bin as a symlink and Node resolves symlinks
+    // when building import.meta.url, so comparing it to an unresolved
+    // process.argv[1] reported "not the main module" for every global install
+    // and the CLI silently did nothing.
+    const link = path.join(tempDir, "taskonaut");
+    fs.symlinkSync(indexPath, link);
+
+    expect(run(link, ["--version"])).toBe(version);
+  });
+
+  test("importing the module does not run the CLI", () => {
+    // The guard exists so tests can import index.js; if importing started
+    // parsing argv, every other suite would be at the mercy of jest's argv.
+    const probe = path.join(tempDir, "probe.mjs");
+    fs.writeFileSync(
+      probe,
+      `import ${JSON.stringify(pathToFileUrl(indexPath))};\nconsole.log("imported-cleanly");\n`,
+    );
+
+    expect(run(probe, ["--version"])).toBe("imported-cleanly");
+  });
+});
+
+/** Builds a file:// URL string for an absolute path. */
+function pathToFileUrl(absolutePath) {
+  return new URL(`file://${absolutePath}`).href;
+}
