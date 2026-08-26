@@ -1,5 +1,4 @@
 node_modules/
 coverage/
-tests/fixtures/
 .DS_Store
 .env*
