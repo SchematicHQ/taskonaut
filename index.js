@@ -264,6 +264,22 @@ async function getAwsProfiles() {
 }
 
 /**
+ * Returns the known AWS profiles, re-syncing once if `profile` is missing.
+ *
+ * The cache can be up to SYNC_INTERVAL stale, and AWS_PROFILE or a changed
+ * AWS_CONFIG_FILE can name a profile added since the last sync. Without this,
+ * a profile that exists on disk is rejected as invalid for up to an hour.
+ *
+ * @param {string} profile - Profile that must be present.
+ * @returns {Promise<string[]>} Known profile names.
+ */
+async function getAwsProfilesIncluding(profile) {
+  const profiles = await getAwsProfiles();
+  if (profiles.includes(profile)) return profiles;
+  return await syncAwsProfiles();
+}
+
+/**
  * Resolves the AWS profile to use. AWS_PROFILE takes precedence over the
  * stored configuration, matching the behaviour of the AWS CLI and SDKs.
  * @returns {string} Profile name.
@@ -294,8 +310,8 @@ function getActiveRegion() {
  * @returns {Promise<ECS>} An instance of the AWS ECS client.
  */
 const initAWS = async () => {
-  const profiles = await getAwsProfiles();
   const currentProfile = getActiveProfile();
+  const profiles = await getAwsProfilesIncluding(currentProfile);
   if (!profiles.includes(currentProfile)) {
     logger.warn(
       chalk.yellow(`Profile ${currentProfile} not found, please reconfigure`),
@@ -405,6 +421,48 @@ function parseRevisionFromArn(arn) {
  */
 function parseFamilyFromArn(arn) {
   return arn.split("/").pop().split(":")[0];
+}
+
+/**
+ * Collects every task definition a service currently references.
+ *
+ * service.taskDefinition names only the PRIMARY deployment. During a rolling
+ * deployment the previous revision is still running under an ACTIVE deployment,
+ * and CodeDeploy / EXTERNAL deployments place revisions on task sets. All of
+ * them are live and must not be treated as prunable.
+ *
+ * @param {object} service - Service as returned by DescribeServices.
+ * @returns {string[]} Distinct task definition ARNs.
+ */
+function extractServiceTaskDefinitions(service) {
+  const arns = new Set();
+
+  if (service.taskDefinition) arns.add(service.taskDefinition);
+  for (const deployment of service.deployments || []) {
+    if (deployment.taskDefinition) arns.add(deployment.taskDefinition);
+  }
+  for (const taskSet of service.taskSets || []) {
+    if (taskSet.taskDefinition) arns.add(taskSet.taskDefinition);
+  }
+
+  return Array.from(arns);
+}
+
+/**
+ * Merges ACTIVE and INACTIVE revision ARNs into one newest-first list.
+ *
+ * ListTaskDefinitions returns only ACTIVE revisions unless status is set, so
+ * both statuses are fetched separately and interleaved here by revision number.
+ * Ordering matters: the latest-N keep window is positional.
+ *
+ * @param {string[]} activeArns - ACTIVE revision ARNs.
+ * @param {string[]} inactiveArns - INACTIVE revision ARNs.
+ * @returns {string[]} All revisions, newest first.
+ */
+function mergeRevisionArnsDesc(activeArns, inactiveArns) {
+  return [...activeArns, ...inactiveArns].sort(
+    (a, b) => parseRevisionFromArn(b) - parseRevisionFromArn(a),
+  );
 }
 
 /**
@@ -967,6 +1025,8 @@ async function listServices(ecs, cluster, quiet = false) {
         serviceName: service.serviceName,
         serviceArn: service.serviceArn,
         taskDefinition: service.taskDefinition,
+        // Every revision this service currently references, not just PRIMARY.
+        inUseTaskDefinitions: extractServiceTaskDefinitions(service),
         taskDefinitionFamily: parseFamilyFromArn(service.taskDefinition),
         revision: parseRevisionFromArn(service.taskDefinition),
         status: service.status,
@@ -978,6 +1038,47 @@ async function listServices(ecs, cluster, quiet = false) {
     if (spinner?.isSpinning) spinner.fail("Failed to fetch services");
     throw err;
   }
+}
+
+/**
+ * Collects every task definition currently in use in a cluster.
+ *
+ * Covers services (including in-flight deployments and task sets) and
+ * standalone tasks, which run-task and scheduled tasks create with no service
+ * attached and which would otherwise look prunable.
+ *
+ * @param {ECS} ecs - AWS ECS client.
+ * @param {string} cluster - Cluster name.
+ * @returns {Promise<Set<string>>} Task definition ARNs in use.
+ */
+async function collectInUseTaskDefinitions(ecs, cluster) {
+  const inUse = new Set();
+
+  const services = await listServices(ecs, cluster, true);
+  for (const service of services) {
+    for (const arn of service.inUseTaskDefinitions) inUse.add(arn);
+  }
+
+  const taskArns = await paginate(
+    (p) => ecs.listTasks(p),
+    { cluster },
+    "taskArns",
+  );
+
+  if (taskArns.length > 0) {
+    const batches = await Promise.all(
+      chunk(taskArns, DESCRIBE_TASKS_BATCH_SIZE).map(async (batch) => {
+        const { tasks } = await ecs.describeTasks({ cluster, tasks: batch });
+        return tasks || [];
+      }),
+    );
+
+    for (const task of batches.flat()) {
+      if (task.taskDefinitionArn) inUse.add(task.taskDefinitionArn);
+    }
+  }
+
+  return inUse;
 }
 
 /**
@@ -1411,17 +1512,25 @@ async function analyzeTaskDefinitionRevisions(
         color: "cyan",
       }).start();
   try {
-    // Get all revisions for this family with pagination
-    const taskDefinitionArns = await fetchAllTaskDefinitions(
-      ecs,
-      {
-        familyPrefix: family,
-        sort: "DESC",
-      },
-      spinner,
-    );
+    // Both statuses, because ListTaskDefinitions lists only ACTIVE revisions
+    // when status is omitted. Without this the INACTIVE revisions the picker
+    // advertises are invisible here and the recommended INACTIVE bucket is
+    // always empty.
+    const [activeArns, inactiveArns] = await Promise.all([
+      fetchAllTaskDefinitions(
+        ecs,
+        { familyPrefix: family, status: "ACTIVE", sort: "DESC" },
+        spinner,
+      ),
+      fetchAllTaskDefinitions(
+        ecs,
+        { familyPrefix: family, status: "INACTIVE", sort: "DESC" },
+        spinner,
+      ),
+    ]);
+    const taskDefinitionArns = mergeRevisionArnsDesc(activeArns, inactiveArns);
 
-    if (!taskDefinitionArns || taskDefinitionArns.length === 0) {
+    if (taskDefinitionArns.length === 0) {
       if (spinner) spinner.warn("No revisions found");
       return { revisions: [], protected: [], inUse: new Set(), latest: 0 };
     }
@@ -1429,15 +1538,12 @@ async function analyzeTaskDefinitionRevisions(
     if (spinner)
       spinner.text = `Found ${taskDefinitionArns.length} revisions, analyzing...`;
 
-    // Find revisions in use by services
-    const inUseRevisions = new Set();
+    // Find revisions in use by services and standalone tasks
+    let inUseRevisions = new Set();
 
     if (cluster) {
       try {
-        const services = await listServices(ecs, cluster, true);
-        services.forEach((service) => {
-          inUseRevisions.add(service.taskDefinition);
-        });
+        inUseRevisions = await collectInUseTaskDefinitions(ecs, cluster);
       } catch (err) {
         // Fail closed. Continuing with an empty in-use set would present
         // revisions that are serving live traffic as safe to delete. The outer
@@ -2183,10 +2289,16 @@ function checkAwsCredentials() {
 
 /**
  * Checks if the configured AWS profile is valid.
- * @returns {boolean} True if valid, false otherwise.
+ *
+ * Reads through the same re-syncing path as initAWS: the raw cache is empty on
+ * a fresh install, which made diagnostics report a perfectly good profile as
+ * unconfigured.
+ *
+ * @returns {Promise<boolean>} True if valid, false otherwise.
  */
-function checkAwsProfileConfigured() {
-  return config.get("awsProfiles").includes(getActiveProfile());
+async function checkAwsProfileConfigured() {
+  const profile = getActiveProfile();
+  return (await getAwsProfilesIncluding(profile)).includes(profile);
 }
 
 /**
@@ -2219,7 +2331,7 @@ async function performDiagnostics() {
     logger.info(chalk.green("✅ AWS credentials are configured."));
   }
 
-  if (!checkAwsProfileConfigured()) {
+  if (!(await checkAwsProfileConfigured())) {
     logger.error(
       chalk.red(`❌ AWS profile '${getActiveProfile()}' is not configured.`),
     );
@@ -2389,13 +2501,27 @@ program
     new Command("show")
       .alias("path")
       .description("Show configuration path and current values")
-      .action(async () => {
+      .option("--json", "Print the configuration as JSON and nothing else")
+      .addHelpText(
+        "after",
+        chalk.dim("Example: taskonaut config show --json | jq ."),
+      )
+      .action(async (options) => {
         try {
-          const spinner = ora("Reading configuration...").start();
           const configDetails = {
             path: config.path,
             values: config.store,
           };
+
+          // --json writes only JSON to stdout: no spinner, no headings, no
+          // colour. Suppressing the banner alone did not make this pipeable,
+          // because the headings below go to stdout too.
+          if (options.json) {
+            console.log(JSON.stringify(configDetails, null, 2));
+            return;
+          }
+
+          const spinner = ora("Reading configuration...").start();
           spinner.succeed("Configuration loaded");
           console.log("\n" + chalk.blue.bold("Configuration Details:"));
           console.log(chalk.dim("Path:"), chalk.green(configDetails.path));
@@ -2736,7 +2862,7 @@ program
           type: "confirm",
           name: "checkUsage",
           message: chalk.blue(
-            "Do you want to check which revisions are in use by services in a specific cluster?",
+            "Do you want to check which revisions are in use by services or running tasks in a specific cluster?",
           ),
           initial: true,
         },
@@ -2840,7 +2966,7 @@ program
           const reason = r.isLatest
             ? "latest revision"
             : r.isInUse
-              ? "in use by services"
+              ? "in use by a service or task"
               : "protected";
           console.log(`    • Revision ${r.revision} - ${reason}`);
         });
@@ -2881,14 +3007,14 @@ program
           if (analysis.protected.length > 1) {
             console.log(
               chalk.dim(
-                `    - ${analysis.protected.length - 1} revision(s) in use by services`,
+                `    - ${analysis.protected.length - 1} revision(s) in use by a service or task`,
               ),
             );
           }
         }
         console.log(
           chalk.dim(
-            `\n💡 Tip: To delete revisions, they must be deregistered (INACTIVE) and not in use by services.`,
+            `\n💡 Tip: To delete revisions, they must not be the latest, not be within the latest ${KEEP_LATEST_COUNT}, and not be in use by a service or running task.`,
           ),
         );
         return;
@@ -2940,7 +3066,7 @@ program
           const reason = r.isLatest
             ? "Latest revision"
             : r.isInUse
-              ? "In use by services"
+              ? "In use by a service or task"
               : "Protected";
           console.log(`   • Revision ${r.revision} - ${reason}`);
         });
@@ -3137,8 +3263,12 @@ if (isMainModule()) {
 // Exported for unit tests. The CLI surface is the `program` above; these are the
 // pure helpers whose behaviour the destructive commands depend on.
 export {
+  analyzeTaskDefinitionRevisions,
   cancelOperation,
   chunk,
+  collectInUseTaskDefinitions,
+  extractServiceTaskDefinitions,
+  mergeRevisionArnsDesc,
   computeDeletionBuckets,
   extractProfileNamesFromConfig,
   getActiveProfile,

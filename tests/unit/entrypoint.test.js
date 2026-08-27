@@ -89,3 +89,30 @@ describe("cancelOperation", () => {
     expect(codes).toEqual([0]);
   });
 });
+
+describe("config show --json", () => {
+  test("stdout parses as JSON", () => {
+    // Regression: gating the banner was not enough to make this pipeable --
+    // the command still wrote headings, the path and "Values:" to stdout, so
+    // `config show | jq .` failed with "Invalid numeric literal". This asserts
+    // on a real parse rather than eyeballing the output.
+    const stdout = run(indexPath, ["config", "show", "--json"]);
+    const parsed = JSON.parse(stdout);
+
+    expect(typeof parsed.path).toBe("string");
+    expect(parsed.values).toBeDefined();
+  });
+
+  test("emits no ANSI escapes", () => {
+    const stdout = run(indexPath, ["config", "show", "--json"]);
+    // eslint-disable-next-line no-control-regex
+    expect(stdout).not.toMatch(/\u001b\[/);
+  });
+
+  test("human output is unchanged by default", () => {
+    const stdout = run(indexPath, ["config", "show"]);
+
+    expect(stdout).toContain("Configuration Details:");
+    expect(() => JSON.parse(stdout)).toThrow();
+  });
+});

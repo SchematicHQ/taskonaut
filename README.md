@@ -119,6 +119,13 @@ taskonaut --command /bin/bash
 `taskonaut doctor` exits non-zero when a check fails, so it can gate a setup
 script or a CI step.
 
+`config show` prints a human-readable summary. For scripting, `--json` writes
+only JSON to stdout:
+
+```bash
+taskonaut config show --json | jq -r .path
+```
+
 ## Configuration
 
 Configuration is stored in:
@@ -233,10 +240,10 @@ The pruning feature helps you clean up unused task definition revisions to reduc
 ### How Pruning Works
 
 1. **Select Task Definition Family** - Choose which task definition family to clean up
-2. **Optional Service Usage Check** - Optionally select a cluster to identify revisions currently in use
+2. **Optional Usage Check** - Optionally select a cluster to identify revisions currently in use. This covers each service's primary revision, revisions still draining under an in-flight deployment, CodeDeploy/`EXTERNAL` task sets, and standalone tasks started by `run-task` or a scheduled task
 3. **Analyze Revisions** - View all revisions with protection status:
    - ✅ **LATEST** - Latest revision (always protected)
-   - 🛡️ **IN-USE** - Currently used by services (protected if cluster checked)
+   - 🛡️ **IN-USE** - Currently used by a service or running task (protected if cluster checked)
    - 📌 **KEEP** - Within the latest 5 revisions (always kept, never offered for deletion)
    - ⚠️ **INACTIVE** - Not in use, eligible for deletion
    - 🔄 **ACTIVE** - Will be deregistered first, then deleted
