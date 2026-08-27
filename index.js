@@ -445,9 +445,13 @@ const DEFAULT_EXEC_COMMAND = "/bin/sh";
 
 /**
  * Shared `prompts` onCancel handler: report and exit without a stack trace.
+ *
+ * Must not call itself: this is the terminal cancellation path, so recursing
+ * here turns every Ctrl+C into a RangeError and a non-zero exit.
  */
 function cancelOperation() {
-  cancelOperation();
+  logger.info(chalk.dim("Operation cancelled"));
+  process.exit(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -3133,6 +3137,7 @@ if (isMainModule()) {
 // Exported for unit tests. The CLI surface is the `program` above; these are the
 // pure helpers whose behaviour the destructive commands depend on.
 export {
+  cancelOperation,
   chunk,
   computeDeletionBuckets,
   extractProfileNamesFromConfig,

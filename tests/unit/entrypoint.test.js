@@ -66,3 +66,26 @@ describe("CLI entrypoint", () => {
 function pathToFileUrl(absolutePath) {
   return new URL(`file://${absolutePath}`).href;
 }
+
+describe("cancelOperation", () => {
+  test("exits cleanly instead of recursing", async () => {
+    // Regression: a bulk edit replaced the log-and-exit body with a call to
+    // the function itself, so every Ctrl+C blew the stack with a RangeError
+    // and the surrounding command reported a failure and exited non-zero.
+    const { cancelOperation } = await import("../../index.js");
+
+    const originalExit = process.exit;
+    const codes = [];
+    process.exit = (code) => {
+      codes.push(code);
+    };
+
+    try {
+      expect(() => cancelOperation()).not.toThrow();
+    } finally {
+      process.exit = originalExit;
+    }
+
+    expect(codes).toEqual([0]);
+  });
+});
