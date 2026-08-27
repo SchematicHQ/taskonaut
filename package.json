@@ -67,7 +67,7 @@
     "figlet": "^1.11.4",
     "gradient-string": "^3.0.0",
     "ini": "^7.0.0",
-    "inquirer": "^14.0.2",
+    "inquirer": "^14.1.0",
     "npm-check-updates": "^23.0.2",
     "ora": "^9.4.1",
     "pino": "^10.3.1",
