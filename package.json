@@ -59,8 +59,8 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "@aws-sdk/client-ecs": "^3.1112.0",
-    "@aws-sdk/credential-providers": "^3.1112.0",
+    "@aws-sdk/client-ecs": "^3.1113.0",
+    "@aws-sdk/credential-providers": "^3.1114.0",
     "chalk": "^6.0.0",
     "commander": "^15.0.0",
     "conf": "^15.1.0",
@@ -80,7 +80,7 @@
     "@semantic-release/git": "^11.0.1",
     "@semantic-release/npm": "^13.1.5",
     "commitizen": "^4.3.2",
-    "conventional-changelog-conventionalcommits": "^10.3.0",
+    "conventional-changelog-conventionalcommits": "^10.4.0",
     "cz-conventional-changelog": "^3.3.0",
     "eslint": "^10.8.1",
     "globals": "^17.11.0",
