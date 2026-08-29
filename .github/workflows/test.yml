@@ -1,19 +1,23 @@
 name: Test
+
+# Least privilege: this workflow only reads the repository.
 permissions:
   contents: read
-  pull-requests: write
 
 on:
   pull_request:
     branches: [main]
 
+# Supersede in-flight runs when a PR is pushed to again.
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: runs-on=${{ github.run_id }}/runner=1cpu-linux-arm64
-    permissions:
-      contents: read
-      pull-requests: write
     strategy:
+      fail-fast: false
       matrix:
         node-version: [22.x, 24.x]
 
@@ -32,8 +36,12 @@ jobs:
       - name: Run linter
         run: npm run lint
 
+      # `format -- --check` expanded to `prettier --write ... --check`, which
+      # rewrites files and always exits 0. format:check is a real gate.
       - name: Check formatting
-        run: npm run format -- --check
+        run: npm run format:check
 
+      # Coverage is enforced by a threshold in jest.config.js, so a change that
+      # adds untested behaviour to the destructive commands fails here.
       - name: Run tests
-        run: npm test
+        run: npm run test:coverage

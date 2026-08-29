@@ -3,7 +3,6 @@
 import { ECS } from "@aws-sdk/client-ecs";
 import { fromIni } from "@aws-sdk/credential-providers";
 import { Command } from "commander";
-import inquirer from "inquirer";
 import prompts from "prompts";
 import pino from "pino";
 import dotenv from "dotenv";
@@ -17,6 +16,11 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import ini from "ini";
+
+// Resolved lazily so importing this module (e.g. from tests) has no side effects.
+const packageJson = JSON.parse(
+  fs.readFileSync(path.join(import.meta.dirname, "package.json"), "utf-8"),
+);
 
 // Load environment variables
 dotenv.config({
@@ -95,14 +99,22 @@ export { AWS_REGIONS };
 // ---------------------------------------------------------------------------
 // Banner & Logger Setup
 // ---------------------------------------------------------------------------
-console.log(
-  pastel.multiline(
-    figlet.textSync("taskonaut", {
-      font: "ANSI Shadow",
-      horizontalLayout: "full",
-    }),
-  ),
-);
+
+/**
+ * Prints the ASCII banner. Skipped when stdout is not a TTY so that piping
+ * command output (e.g. `taskonaut config show | jq`) stays machine-readable.
+ */
+function printBanner() {
+  if (!process.stdout.isTTY) return;
+  console.log(
+    pastel.multiline(
+      figlet.textSync("taskonaut", {
+        font: "ANSI Shadow",
+        horizontalLayout: "full",
+      }),
+    ),
+  );
+}
 
 const logger = pino({
   transport: {
@@ -121,32 +133,90 @@ const logger = pino({
 // ---------------------------------------------------------------------------
 
 /**
+ * Resolves the AWS shared credentials file path, honouring
+ * AWS_SHARED_CREDENTIALS_FILE.
+ * @returns {string} Path to the credentials file.
+ */
+function getCredentialsPath() {
+  return (
+    process.env.AWS_SHARED_CREDENTIALS_FILE ||
+    path.join(os.homedir(), ".aws", "credentials")
+  );
+}
+
+/**
+ * Resolves the AWS config file path, honouring AWS_CONFIG_FILE.
+ * @returns {string} Path to the config file.
+ */
+function getConfigPath() {
+  return (
+    process.env.AWS_CONFIG_FILE || path.join(os.homedir(), ".aws", "config")
+  );
+}
+
+// Section prefixes in ~/.aws/config that are not profiles. AWS uses these for
+// SSO sessions and service-specific settings; they must not be offered as
+// selectable profiles.
+const NON_PROFILE_SECTION_PREFIXES = ["sso-session", "services", "plugins"];
+
+/**
+ * Extracts profile names from a parsed ~/.aws/config object.
+ *
+ * Sections are `[profile name]` (or bare `[default]`); `[sso-session x]` and
+ * `[services x]` are not profiles. Top-level keys (settings written outside any
+ * section) are skipped as well.
+ *
+ * @param {object} parsed - Result of `ini.parse` on a config file.
+ * @returns {string[]} Profile names.
+ */
+function extractProfileNamesFromConfig(parsed) {
+  const names = [];
+
+  for (const [section, value] of Object.entries(parsed)) {
+    // Bare `key = value` pairs outside a section are not profiles.
+    if (typeof value !== "object" || value === null) continue;
+
+    const prefix = section.split(/\s+/)[0];
+    if (NON_PROFILE_SECTION_PREFIXES.includes(prefix)) continue;
+
+    // Anchored so a profile literally named "a profile b" is left intact.
+    names.push(section.replace(/^profile\s+/, ""));
+  }
+
+  return names;
+}
+
+/**
  * Parses AWS profiles from credentials and config files.
  * @returns {string[]} Array of AWS profile names.
  */
 function parseAwsProfiles() {
   const profiles = new Set();
 
-  const credentialsPath = path.join(os.homedir(), ".aws", "credentials");
+  const credentialsPath = getCredentialsPath();
   if (fs.existsSync(credentialsPath)) {
     try {
       const content = fs.readFileSync(credentialsPath, "utf-8");
       const parsed = ini.parse(content);
-      Object.keys(parsed).forEach((profile) => profiles.add(profile));
+      for (const [section, value] of Object.entries(parsed)) {
+        // The credentials file has no `profile ` prefix, but it can still hold
+        // stray top-level keys.
+        if (typeof value !== "object" || value === null) continue;
+        profiles.add(section);
+      }
     } catch (err) {
       logger.error(chalk.red(`Error parsing credentials file: ${err.message}`));
     }
   }
 
-  const configPath = path.join(os.homedir(), ".aws", "config");
+  const configPath = getConfigPath();
   if (fs.existsSync(configPath)) {
     try {
       const content = fs.readFileSync(configPath, "utf-8");
       const parsed = ini.parse(content);
-      Object.keys(parsed).forEach((profile) => {
-        const profileName = profile.replace("profile ", "");
-        profiles.add(profileName);
-      });
+      extractProfileNamesFromConfig(parsed).forEach((name) =>
+        profiles.add(name),
+      );
     } catch (err) {
       logger.error(chalk.red(`Error parsing config file: ${err.message}`));
     }
@@ -183,10 +253,52 @@ async function syncAwsProfiles() {
  */
 async function getAwsProfiles() {
   const lastSync = config.get("lastProfileSync");
-  if (Date.now() - lastSync > SYNC_INTERVAL) {
+  const cached = config.get("awsProfiles");
+
+  // Re-sync when the cache is stale or empty; an empty cache otherwise wedges
+  // the tool for a full sync interval with "Invalid AWS profile".
+  if (Date.now() - lastSync > SYNC_INTERVAL || cached.length === 0) {
     return await syncAwsProfiles();
   }
-  return config.get("awsProfiles");
+  return cached;
+}
+
+/**
+ * Returns the known AWS profiles, re-syncing once if `profile` is missing.
+ *
+ * The cache can be up to SYNC_INTERVAL stale, and AWS_PROFILE or a changed
+ * AWS_CONFIG_FILE can name a profile added since the last sync. Without this,
+ * a profile that exists on disk is rejected as invalid for up to an hour.
+ *
+ * @param {string} profile - Profile that must be present.
+ * @returns {Promise<string[]>} Known profile names.
+ */
+async function getAwsProfilesIncluding(profile) {
+  const profiles = await getAwsProfiles();
+  if (profiles.includes(profile)) return profiles;
+  return await syncAwsProfiles();
+}
+
+/**
+ * Resolves the AWS profile to use. AWS_PROFILE takes precedence over the
+ * stored configuration, matching the behaviour of the AWS CLI and SDKs.
+ * @returns {string} Profile name.
+ */
+function getActiveProfile() {
+  return process.env.AWS_PROFILE || config.get("awsProfile");
+}
+
+/**
+ * Resolves the AWS region to use. AWS_REGION / AWS_DEFAULT_REGION take
+ * precedence over the stored configuration.
+ * @returns {string} Region name.
+ */
+function getActiveRegion() {
+  return (
+    process.env.AWS_REGION ||
+    process.env.AWS_DEFAULT_REGION ||
+    config.get("awsRegion")
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -198,26 +310,272 @@ async function getAwsProfiles() {
  * @returns {Promise<ECS>} An instance of the AWS ECS client.
  */
 const initAWS = async () => {
-  try {
-    const profiles = await getAwsProfiles();
-    const currentProfile = config.get("awsProfile");
-    if (!profiles.includes(currentProfile)) {
-      logger.warn(
-        chalk.yellow(`Profile ${currentProfile} not found, please reconfigure`),
-      );
-      throw new Error("Invalid AWS profile");
-    }
-    const region = config.get("awsRegion");
-    logger.info(
-      chalk.dim(`Using AWS Profile: ${currentProfile} and Region: ${region}`),
+  const currentProfile = getActiveProfile();
+  const profiles = await getAwsProfilesIncluding(currentProfile);
+  if (!profiles.includes(currentProfile)) {
+    logger.warn(
+      chalk.yellow(`Profile ${currentProfile} not found, please reconfigure`),
     );
-    const credentials = await fromIni({ profile: currentProfile })();
-    return new ECS({ region, credentials });
-  } catch (err) {
-    logger.error(chalk.red(err.message));
-    throw err;
+    throw new Error("Invalid AWS profile");
   }
+  const region = getActiveRegion();
+  logger.info(
+    chalk.dim(`Using AWS Profile: ${currentProfile} and Region: ${region}`),
+  );
+
+  // Pass the provider itself rather than pre-resolved credentials so the SDK
+  // can refresh them. Long-running operations (prune walks thousands of
+  // revisions with backoff) can outlive a short-lived SSO session.
+  return new ECS({ region, credentials: fromIni({ profile: currentProfile }) });
 };
+
+// ---------------------------------------------------------------------------
+// Pagination Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Collects every page of a paginated ECS list operation.
+ *
+ * ECS list APIs cap a single page well below the number of resources a real
+ * account holds -- notably ListServices returns only 10 items when maxResults
+ * is omitted -- so every listing must be paginated to be correct.
+ *
+ * @param {Function} operation - Called with `{ ...params, nextToken }`.
+ * @param {object} params - Base request parameters.
+ * @param {string} key - Response property holding the page of results.
+ * @returns {Promise<Array>} All results across every page.
+ */
+async function paginate(operation, params, key, options = {}) {
+  const {
+    spinner = null,
+    maxRetries = PAGINATE_MAX_RETRIES,
+    label = null,
+  } = options;
+
+  const results = [];
+  let nextToken;
+  let retryCount = 0;
+  let exhausted = false;
+
+  // Loop on an explicit flag rather than on nextToken. nextToken is undefined
+  // before the first request, so a `while (nextToken)` loop would exit instead
+  // of retrying when the very first page is throttled -- silently returning an
+  // empty list rather than the caller's data.
+  while (!exhausted) {
+    try {
+      const response = await operation({
+        ...params,
+        maxResults: 100, // AWS maximum for all ECS list operations.
+        nextToken,
+      });
+
+      if (response[key]) results.push(...response[key]);
+      nextToken = response.nextToken;
+      retryCount = 0;
+
+      if (!nextToken) {
+        exhausted = true;
+        break;
+      }
+
+      if (spinner && label) {
+        spinner.text = `${label} (${results.length} so far)`;
+      }
+      await sleep(PAGE_DELAY_MS);
+    } catch (err) {
+      if (!isThrottlingError(err)) throw err;
+
+      retryCount += 1;
+      if (retryCount > maxRetries) {
+        throw new Error(
+          `Rate limit exceeded after ${maxRetries} retries. Please try again later.`,
+          { cause: err },
+        );
+      }
+
+      const backoffMs = Math.min(
+        1000 * Math.pow(2, retryCount - 1),
+        PAGINATE_MAX_BACKOFF_MS,
+      );
+      if (spinner) {
+        spinner.text = chalk.yellow(
+          `⚠️  Rate limit, pausing ${backoffMs / 1000}s... (${retryCount}/${maxRetries})`,
+        );
+      }
+      await sleep(backoffMs);
+      // nextToken is deliberately unchanged: the same page is re-requested.
+    }
+  }
+
+  return results;
+}
+
+/**
+ * True when an error is an ECS throttling / rate-limit error.
+ * @param {Error} err - Error to classify.
+ * @returns {boolean}
+ */
+function isThrottlingError(err) {
+  return (
+    err?.name === "ThrottlingException" ||
+    err?.name === "TooManyRequestsException" ||
+    Boolean(err?.message?.includes("Rate exceeded"))
+  );
+}
+
+/**
+ * Splits an array into fixed-size chunks.
+ * @param {Array} items - Items to chunk.
+ * @param {number} size - Maximum chunk size.
+ * @returns {Array<Array>} Chunks.
+ */
+function chunk(items, size) {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+/**
+ * Maps over items with a bounded number of in-flight operations.
+ *
+ * Unbounded Promise.all over every task definition family is a reliable way to
+ * get throttled by the ECS API.
+ *
+ * @param {Array} items - Items to map.
+ * @param {number} limit - Maximum concurrent operations.
+ * @param {Function} fn - Async mapper, called with (item, index).
+ * @returns {Promise<Array>} Results in input order.
+ */
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (cursor < items.length) {
+        const index = cursor++;
+        results[index] = await fn(items[index], index);
+      }
+    },
+  );
+
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Extracts the revision number from a task definition ARN.
+ * @param {string} arn - Task definition ARN (…:task-definition/family:revision).
+ * @returns {number} Revision number, or NaN when unparseable.
+ */
+function parseRevisionFromArn(arn) {
+  return parseInt(arn.split(":").pop(), 10);
+}
+
+/**
+ * Extracts the family name from a task definition ARN.
+ * @param {string} arn - Task definition ARN.
+ * @returns {string} Family name.
+ */
+function parseFamilyFromArn(arn) {
+  return arn.split("/").pop().split(":")[0];
+}
+
+/**
+ * Collects every task definition a service currently references.
+ *
+ * service.taskDefinition names only the PRIMARY deployment. During a rolling
+ * deployment the previous revision is still running under an ACTIVE deployment,
+ * and CodeDeploy / EXTERNAL deployments place revisions on task sets. All of
+ * them are live and must not be treated as prunable.
+ *
+ * @param {object} service - Service as returned by DescribeServices.
+ * @returns {string[]} Distinct task definition ARNs.
+ */
+function extractServiceTaskDefinitions(service) {
+  const arns = new Set();
+
+  if (service.taskDefinition) arns.add(service.taskDefinition);
+  for (const deployment of service.deployments || []) {
+    if (deployment.taskDefinition) arns.add(deployment.taskDefinition);
+  }
+  for (const taskSet of service.taskSets || []) {
+    if (taskSet.taskDefinition) arns.add(taskSet.taskDefinition);
+  }
+
+  return Array.from(arns);
+}
+
+/**
+ * Merges ACTIVE and INACTIVE revision ARNs into one newest-first list.
+ *
+ * ListTaskDefinitions returns only ACTIVE revisions unless status is set, so
+ * both statuses are fetched separately and interleaved here by revision number.
+ * Ordering matters: the latest-N keep window is positional.
+ *
+ * @param {string[]} activeArns - ACTIVE revision ARNs.
+ * @param {string[]} inactiveArns - INACTIVE revision ARNs.
+ * @returns {string[]} All revisions, newest first.
+ */
+function mergeRevisionArnsDesc(activeArns, inactiveArns) {
+  return [...activeArns, ...inactiveArns].sort(
+    (a, b) => parseRevisionFromArn(b) - parseRevisionFromArn(a),
+  );
+}
+
+/**
+ * Extracts the human-readable tag from a container image reference.
+ *
+ * Handles registries that carry a port (`registry:5000/app`), where a naive
+ * split on ":" reports the port as the tag, and digest pins (`app@sha256:…`).
+ *
+ * @param {string} image - Image reference.
+ * @returns {string} Tag, short digest, or "latest".
+ */
+function parseImageTag(image) {
+  if (!image) return "latest";
+
+  const [reference, digest] = image.split("@");
+  const lastSlash = reference.lastIndexOf("/");
+  const lastColon = reference.lastIndexOf(":");
+
+  if (lastColon > lastSlash) return reference.slice(lastColon + 1);
+  if (digest) return digest.slice(0, 19);
+  return "latest";
+}
+
+// AWS caps DescribeServices at 10 services per call.
+const DESCRIBE_SERVICES_BATCH_SIZE = 10;
+// AWS caps DescribeTasks at 100 tasks per call.
+const DESCRIBE_TASKS_BATCH_SIZE = 100;
+// Families detailed in parallel when building the prune picker.
+const FAMILY_DETAIL_CONCURRENCY = 5;
+// Pagination pacing and retry budget, shared by every ECS list operation.
+const PAGE_DELAY_MS = 100;
+const PAGINATE_MAX_RETRIES = 5;
+const PAGINATE_MAX_BACKOFF_MS = 16000;
+// Newest revisions offered as rollback targets.
+const ROLLBACK_REVISION_LIMIT = 100;
+// Number of newest revisions the prune command promises to keep.
+const KEEP_LATEST_COUNT = 5;
+// Maximum revisions rendered in the manual checkbox list.
+const MANUAL_SELECTION_LIMIT = 100;
+// Shell used for `ecs execute-command` when --command is not supplied.
+const DEFAULT_EXEC_COMMAND = "/bin/sh";
+
+/**
+ * Shared `prompts` onCancel handler: report and exit without a stack trace.
+ *
+ * Must not call itself: this is the terminal cancellation path, so recursing
+ * here turns every Ctrl+C into a RangeError and a non-zero exit.
+ */
+function cancelOperation() {
+  logger.info(chalk.dim("Operation cancelled"));
+  process.exit(0);
+}
 
 // ---------------------------------------------------------------------------
 // AWS ECS Cluster, Task, and Container Management
@@ -230,12 +588,16 @@ const initAWS = async () => {
  * @returns {Promise<Array<{clusterName: string, servicesCount: number, tasksCount: number, containerInstancesCount: number}>>} Clusters with details.
  */
 async function listClusters(ecs, quiet = false) {
+  const spinner = quiet ? null : ora("Fetching clusters...").start();
   try {
-    const spinner = quiet ? null : ora("Fetching clusters...").start();
-    const { clusterArns } = await ecs.listClusters({});
+    const clusterArns = await paginate(
+      (p) => ecs.listClusters(p),
+      {},
+      "clusterArns",
+    );
     if (spinner) spinner.succeed("Clusters fetched");
 
-    if (!clusterArns || clusterArns.length === 0) {
+    if (clusterArns.length === 0) {
       logger.warn(chalk.yellow("No clusters found."));
       return [];
     }
@@ -248,12 +610,12 @@ async function listClusters(ecs, quiet = false) {
         let containerInstancesCount = 0;
 
         try {
-          const servicesResult = await ecs.listServices({
-            cluster: clusterName,
-          });
-          servicesCount = servicesResult.serviceArns
-            ? servicesResult.serviceArns.length
-            : 0;
+          const serviceArns = await paginate(
+            (p) => ecs.listServices(p),
+            { cluster: clusterName },
+            "serviceArns",
+          );
+          servicesCount = serviceArns.length;
         } catch (err) {
           logger.error(
             chalk.red(
@@ -263,8 +625,12 @@ async function listClusters(ecs, quiet = false) {
         }
 
         try {
-          const tasksResult = await ecs.listTasks({ cluster: clusterName });
-          tasksCount = tasksResult.taskArns ? tasksResult.taskArns.length : 0;
+          const taskArns = await paginate(
+            (p) => ecs.listTasks(p),
+            { cluster: clusterName },
+            "taskArns",
+          );
+          tasksCount = taskArns.length;
         } catch (err) {
           logger.error(
             chalk.red(
@@ -274,13 +640,12 @@ async function listClusters(ecs, quiet = false) {
         }
 
         try {
-          const containerInstancesResult = await ecs.listContainerInstances({
-            cluster: clusterName,
-          });
-          containerInstancesCount =
-            containerInstancesResult.containerInstanceArns
-              ? containerInstancesResult.containerInstanceArns.length
-              : 0;
+          const containerInstanceArns = await paginate(
+            (p) => ecs.listContainerInstances(p),
+            { cluster: clusterName },
+            "containerInstanceArns",
+          );
+          containerInstancesCount = containerInstanceArns.length;
         } catch (err) {
           logger.error(
             chalk.red(
@@ -300,7 +665,7 @@ async function listClusters(ecs, quiet = false) {
 
     return clusters;
   } catch (err) {
-    logger.error(chalk.red(err.message));
+    if (spinner?.isSpinning) spinner.fail("Failed to fetch clusters");
     throw err;
   }
 }
@@ -359,8 +724,7 @@ async function selectCluster(ecs) {
   });
 
   if (!clusterResponse.cluster) {
-    logger.info(chalk.dim("Operation cancelled"));
-    process.exit(0);
+    cancelOperation();
   }
 
   return clusterResponse.cluster;
@@ -374,11 +738,15 @@ async function selectCluster(ecs) {
  * @returns {Promise<string>} Selected task ARN or '__BACK__'.
  */
 async function selectTask(ecs, cluster, allowBack = false) {
+  const spinner = ora("Fetching tasks...").start();
   try {
-    const spinner = ora("Fetching tasks...").start();
-    const { taskArns } = await ecs.listTasks({ cluster });
+    const taskArns = await paginate(
+      (p) => ecs.listTasks(p),
+      { cluster },
+      "taskArns",
+    );
 
-    if (!taskArns || taskArns.length === 0) {
+    if (taskArns.length === 0) {
       spinner.warn("No tasks found in cluster");
 
       if (allowBack) {
@@ -412,8 +780,7 @@ async function selectTask(ecs, cluster, allowBack = false) {
         });
 
         if (!actionResponse.action) {
-          logger.info(chalk.dim("Operation cancelled"));
-          process.exit(0);
+          cancelOperation();
         }
 
         if (actionResponse.action === "__EXIT__") {
@@ -428,10 +795,13 @@ async function selectTask(ecs, cluster, allowBack = false) {
       }
     }
 
-    const { tasks } = await ecs.describeTasks({
-      cluster,
-      tasks: taskArns,
-    });
+    const taskBatches = await Promise.all(
+      chunk(taskArns, DESCRIBE_TASKS_BATCH_SIZE).map(async (batch) => {
+        const { tasks } = await ecs.describeTasks({ cluster, tasks: batch });
+        return tasks || [];
+      }),
+    );
+    const tasks = taskBatches.flat();
 
     spinner.succeed("Tasks fetched");
 
@@ -479,13 +849,12 @@ async function selectTask(ecs, cluster, allowBack = false) {
     });
 
     if (!taskResponse.taskArn) {
-      logger.info(chalk.dim("Operation cancelled"));
-      process.exit(0);
+      cancelOperation();
     }
 
     return taskResponse.taskArn;
   } catch (err) {
-    logger.error(chalk.red(err.message));
+    if (spinner.isSpinning) spinner.fail("Failed to fetch tasks");
     throw err;
   }
 }
@@ -498,21 +867,16 @@ async function selectTask(ecs, cluster, allowBack = false) {
  * @returns {Promise<object>} Task details.
  */
 async function getTaskDetails(ecs, cluster, taskArn) {
-  try {
-    const { tasks } = await ecs.describeTasks({
-      cluster,
-      tasks: [taskArn],
-    });
+  const { tasks } = await ecs.describeTasks({
+    cluster,
+    tasks: [taskArn],
+  });
 
-    if (!tasks || tasks.length === 0) {
-      throw new Error("Task not found");
-    }
-
-    return tasks[0];
-  } catch (err) {
-    logger.error(chalk.red(err.message));
-    throw err;
+  if (!tasks || tasks.length === 0) {
+    throw new Error("Task not found");
   }
+
+  return tasks[0];
 }
 
 /**
@@ -525,9 +889,22 @@ async function getTaskDetails(ecs, cluster, taskArn) {
  */
 async function selectContainer(ecs, cluster, taskArn, allowBack = false) {
   const spinner = ora("Fetching container details...").start();
-  const task = await getTaskDetails(ecs, cluster, taskArn);
-  const containers = task.containers;
+  let task;
+  try {
+    task = await getTaskDetails(ecs, cluster, taskArn);
+  } catch (err) {
+    if (spinner.isSpinning) spinner.fail("Failed to fetch container details");
+    throw err;
+  }
+  const containers = task.containers || [];
   spinner.succeed("Container details fetched");
+
+  if (containers.length === 0) {
+    // Nothing to prompt for; an empty choice list renders an unusable prompt.
+    throw new Error(
+      `Task ${taskArn.split("/").pop()} reports no containers (lastStatus: ${task.lastStatus}).`,
+    );
+  }
 
   let choices;
 
@@ -565,11 +942,46 @@ async function selectContainer(ecs, cluster, taskArn, allowBack = false) {
   });
 
   if (!containerResponse.containerName) {
-    logger.info(chalk.dim("Operation cancelled"));
-    process.exit(0);
+    cancelOperation();
   }
 
   return containerResponse.containerName;
+}
+
+/**
+ * Builds the argv for `aws ecs execute-command`.
+ *
+ * Returned as an array and spawned without a shell, so cluster, task and
+ * container names can never be interpreted as shell syntax.
+ *
+ * @param {object} params - Session parameters.
+ * @returns {string[]} Arguments for the AWS CLI.
+ */
+function buildExecuteCommandArgs({
+  profile,
+  region,
+  cluster,
+  taskArn,
+  containerName,
+  command,
+}) {
+  return [
+    "ecs",
+    "execute-command",
+    "--profile",
+    profile,
+    "--region",
+    region,
+    "--cluster",
+    cluster,
+    "--task",
+    taskArn,
+    "--container",
+    containerName,
+    "--command",
+    command,
+    "--interactive",
+  ];
 }
 
 /**
@@ -579,29 +991,25 @@ async function selectContainer(ecs, cluster, taskArn, allowBack = false) {
  * @param {string} containerName - Container name.
  * @returns {Promise<number>} Exit code.
  */
-async function executeCommand(cluster, taskArn, containerName) {
+async function executeCommand(
+  cluster,
+  taskArn,
+  containerName,
+  command = DEFAULT_EXEC_COMMAND,
+) {
   return new Promise((resolve, reject) => {
-    logger.info(chalk.dim("Starting shell session..."));
+    logger.info(chalk.dim(`Starting session (${command})...`));
 
     const childProcess = spawn(
       "aws",
-      [
-        "ecs",
-        "execute-command",
-        "--profile",
-        config.get("awsProfile"),
-        "--region",
-        config.get("awsRegion"),
-        "--cluster",
+      buildExecuteCommandArgs({
+        profile: getActiveProfile(),
+        region: getActiveRegion(),
         cluster,
-        "--task",
         taskArn,
-        "--container",
         containerName,
-        "--command",
-        "/bin/sh",
-        "--interactive",
-      ],
+        command,
+      }),
       {
         stdio: "inherit",
       },
@@ -609,13 +1017,18 @@ async function executeCommand(cluster, taskArn, containerName) {
 
     const signals = ["SIGINT", "SIGTERM", "SIGQUIT"];
     const signalHandlers = {};
+    let settled = false;
+
+    const removeSignalHandlers = () => {
+      signals.forEach((signal) => {
+        process.removeListener(signal, signalHandlers[signal]);
+      });
+    };
 
     const cleanup = () => {
       logger.info(chalk.yellow("📤 Cleaning up ECS session..."));
       childProcess.kill("SIGTERM");
-      signals.forEach((signal) => {
-        process.removeListener(signal, signalHandlers[signal]);
-      });
+      removeSignalHandlers();
     };
 
     signals.forEach((signal) => {
@@ -624,15 +1037,28 @@ async function executeCommand(cluster, taskArn, containerName) {
     });
 
     childProcess.on("error", (err) => {
-      logger.error(chalk.red(err.message));
-      cleanup();
+      if (settled) return;
+      settled = true;
+      removeSignalHandlers();
+
+      // ENOENT here means the AWS CLI itself is missing, which is worth saying
+      // plainly rather than surfacing a bare spawn error.
+      if (err.code === "ENOENT") {
+        reject(
+          new Error(
+            "Could not run the AWS CLI. Install it and run `taskonaut doctor` to verify your setup.",
+            { cause: err },
+          ),
+        );
+        return;
+      }
       reject(err);
     });
 
     childProcess.on("exit", (code) => {
-      signals.forEach((signal) => {
-        process.removeListener(signal, signalHandlers[signal]);
-      });
+      if (settled) return;
+      settled = true;
+      removeSignalHandlers();
       logger.info(
         chalk.green(`✨ Session ended with exit code ${chalk.bold(code)}`),
       );
@@ -653,43 +1079,96 @@ async function executeCommand(cluster, taskArn, containerName) {
  * @returns {Promise<Array<{serviceName: string, serviceArn: string, taskDefinition: string, taskDefinitionFamily: string, revision: number, status: string, desiredCount: number, runningCount: number}>>} Services with details.
  */
 async function listServices(ecs, cluster, quiet = false) {
+  const spinner = quiet ? null : ora("Fetching services...").start();
   try {
-    const spinner = quiet ? null : ora("Fetching services...").start();
-    const { serviceArns } = await ecs.listServices({ cluster });
+    // ListServices returns only 10 items when maxResults is omitted, so this
+    // must paginate: a truncated list silently under-reports which task
+    // definition revisions are in use.
+    const serviceArns = await paginate(
+      (p) => ecs.listServices(p),
+      { cluster },
+      "serviceArns",
+    );
     if (spinner) spinner.text = "Fetching service details...";
 
-    if (!serviceArns || serviceArns.length === 0) {
+    if (serviceArns.length === 0) {
       if (spinner) spinner.warn("No services found");
       return [];
     }
 
-    const { services } = await ecs.describeServices({
-      cluster,
-      services: serviceArns,
-    });
+    // DescribeServices accepts at most 10 services per call.
+    const serviceBatches = await Promise.all(
+      chunk(serviceArns, DESCRIBE_SERVICES_BATCH_SIZE).map(async (batch) => {
+        const { services } = await ecs.describeServices({
+          cluster,
+          services: batch,
+        });
+        return services || [];
+      }),
+    );
+    const services = serviceBatches.flat();
 
-    if (spinner) spinner.succeed("Services fetched");
+    if (spinner) spinner.succeed(`Services fetched (${services.length})`);
 
     return services.map((service) => {
-      const taskDefParts = service.taskDefinition.split("/").pop().split(":");
-      const family = taskDefParts[0];
-      const revision = parseInt(taskDefParts[1]);
-
       return {
         serviceName: service.serviceName,
         serviceArn: service.serviceArn,
         taskDefinition: service.taskDefinition,
-        taskDefinitionFamily: family,
-        revision: revision,
+        // Every revision this service currently references, not just PRIMARY.
+        inUseTaskDefinitions: extractServiceTaskDefinitions(service),
+        taskDefinitionFamily: parseFamilyFromArn(service.taskDefinition),
+        revision: parseRevisionFromArn(service.taskDefinition),
         status: service.status,
         desiredCount: service.desiredCount,
         runningCount: service.runningCount,
       };
     });
   } catch (err) {
-    logger.error(chalk.red(err.message));
+    if (spinner?.isSpinning) spinner.fail("Failed to fetch services");
     throw err;
   }
+}
+
+/**
+ * Collects every task definition currently in use in a cluster.
+ *
+ * Covers services (including in-flight deployments and task sets) and
+ * standalone tasks, which run-task and scheduled tasks create with no service
+ * attached and which would otherwise look prunable.
+ *
+ * @param {ECS} ecs - AWS ECS client.
+ * @param {string} cluster - Cluster name.
+ * @returns {Promise<Set<string>>} Task definition ARNs in use.
+ */
+async function collectInUseTaskDefinitions(ecs, cluster) {
+  const inUse = new Set();
+
+  const services = await listServices(ecs, cluster, true);
+  for (const service of services) {
+    for (const arn of service.inUseTaskDefinitions) inUse.add(arn);
+  }
+
+  const taskArns = await paginate(
+    (p) => ecs.listTasks(p),
+    { cluster },
+    "taskArns",
+  );
+
+  if (taskArns.length > 0) {
+    const batches = await Promise.all(
+      chunk(taskArns, DESCRIBE_TASKS_BATCH_SIZE).map(async (batch) => {
+        const { tasks } = await ecs.describeTasks({ cluster, tasks: batch });
+        return tasks || [];
+      }),
+    );
+
+    for (const task of batches.flat()) {
+      if (task.taskDefinitionArn) inUse.add(task.taskDefinitionArn);
+    }
+  }
+
+  return inUse;
 }
 
 /**
@@ -700,32 +1179,37 @@ async function listServices(ecs, cluster, quiet = false) {
  * @returns {Promise<Array<{taskDefinition: string, revision: number, status: string, createdAt: Date}>>} Task definition revisions.
  */
 async function listTaskDefinitionRevisions(ecs, family, quiet = false) {
+  const spinner = quiet
+    ? null
+    : ora("Fetching task definition revisions...").start();
   try {
-    const spinner = quiet
-      ? null
-      : ora("Fetching task definition revisions...").start();
-    const { taskDefinitionArns } = await ecs.listTaskDefinitions({
-      familyPrefix: family,
-      status: "ACTIVE",
-      sort: "DESC",
-    });
+    // Paginated: a family that has been deployed more than 100 times would
+    // otherwise hide its older revisions from the rollback picker.
+    const taskDefinitionArns = await fetchAllTaskDefinitions(
+      ecs,
+      { familyPrefix: family, status: "ACTIVE", sort: "DESC" },
+      spinner,
+    );
 
-    if (!taskDefinitionArns || taskDefinitionArns.length === 0) {
+    if (taskDefinitionArns.length === 0) {
       if (spinner) spinner.warn("No task definitions found");
       return [];
     }
 
-    // Get detailed info for each task definition
+    // Only the most recent revisions are realistic rollback targets, and
+    // registeredAt is the sole field describeTaskDefinition adds here, so
+    // describe just the page the user will actually see.
+    const describable = taskDefinitionArns.slice(0, ROLLBACK_REVISION_LIMIT);
+
     const revisions = await Promise.all(
-      taskDefinitionArns.map(async (arn) => {
+      describable.map(async (arn) => {
         try {
           const { taskDefinition } = await ecs.describeTaskDefinition({
             taskDefinition: arn,
           });
-          const revision = parseInt(arn.split(":").pop());
           return {
             taskDefinition: arn,
-            revision: revision,
+            revision: taskDefinition.revision,
             status: taskDefinition.status,
             createdAt: taskDefinition.registeredAt,
           };
@@ -740,10 +1224,26 @@ async function listTaskDefinitionRevisions(ecs, family, quiet = false) {
       }),
     );
 
-    if (spinner) spinner.succeed("Task definition revisions fetched");
+    if (spinner) {
+      spinner.succeed(
+        taskDefinitionArns.length > describable.length
+          ? `Task definition revisions fetched (showing newest ${describable.length} of ${taskDefinitionArns.length})`
+          : "Task definition revisions fetched",
+      );
+    }
+
+    if (taskDefinitionArns.length > describable.length) {
+      logger.info(
+        chalk.dim(
+          `Showing the newest ${describable.length} of ${taskDefinitionArns.length} ACTIVE revisions.`,
+        ),
+      );
+    }
+
     return revisions.filter(Boolean).sort((a, b) => b.revision - a.revision);
   } catch (err) {
-    logger.error(chalk.red(err.message));
+    if (spinner?.isSpinning)
+      spinner.fail("Failed to fetch task definition revisions");
     throw err;
   }
 }
@@ -762,9 +1262,8 @@ async function compareTaskDefinitions(
   targetArn,
   quiet = false,
 ) {
+  const spinner = quiet ? null : ora("Comparing task definitions...").start();
   try {
-    const spinner = quiet ? null : ora("Comparing task definitions...").start();
-
     const [currentResponse, targetResponse] = await Promise.all([
       ecs.describeTaskDefinition({ taskDefinition: currentArn }),
       ecs.describeTaskDefinition({ taskDefinition: targetArn }),
@@ -788,19 +1287,41 @@ async function compareTaskDefinitions(
       image: c.image,
     }));
 
-    currentImages.forEach((currentContainer) => {
-      const targetContainer = targetImages.find(
-        (t) => t.name === currentContainer.name,
-      );
-      if (targetContainer && currentContainer.image !== targetContainer.image) {
+    // Walk the union of container names so containers added or removed between
+    // the two revisions are reported, not just images that changed in place.
+    const currentByName = new Map(currentImages.map((c) => [c.name, c.image]));
+    const targetByName = new Map(targetImages.map((c) => [c.name, c.image]));
+
+    for (const name of new Set([
+      ...currentByName.keys(),
+      ...targetByName.keys(),
+    ])) {
+      const currentImage = currentByName.get(name);
+      const targetImage = targetByName.get(name);
+
+      if (currentImage === targetImage) continue;
+
+      if (currentImage === undefined) {
+        differences.push({
+          type: "container_added",
+          container: name,
+          target: targetImage,
+        });
+      } else if (targetImage === undefined) {
+        differences.push({
+          type: "container_removed",
+          container: name,
+          current: currentImage,
+        });
+      } else {
         differences.push({
           type: "image",
-          container: currentContainer.name,
-          current: currentContainer.image,
-          target: targetContainer.image,
+          container: name,
+          current: currentImage,
+          target: targetImage,
         });
       }
-    });
+    }
 
     // Compare CPU and memory
     if (current.cpu !== target.cpu) {
@@ -839,7 +1360,7 @@ async function compareTaskDefinitions(
       differences,
     };
   } catch (err) {
-    logger.error(chalk.red(err.message));
+    if (spinner?.isSpinning) spinner.fail("Failed to compare task definitions");
     throw err;
   }
 }
@@ -860,11 +1381,8 @@ async function performRollback(
   taskDefinitionArn,
   quiet = false,
 ) {
+  const spinner = quiet ? null : ora("Initiating service rollback...").start();
   try {
-    const spinner = quiet
-      ? null
-      : ora("Initiating service rollback...").start();
-
     const response = await ecs.updateService({
       cluster,
       service: serviceName,
@@ -874,7 +1392,7 @@ async function performRollback(
     if (spinner) spinner.succeed("Rollback initiated successfully");
     return response;
   } catch (err) {
-    logger.error(chalk.red(err.message));
+    if (spinner?.isSpinning) spinner.fail("Rollback failed");
     throw err;
   }
 }
@@ -889,7 +1407,7 @@ async function performRollback(
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -904,66 +1422,23 @@ function wasPromptCancelled(response, key) {
 }
 
 /**
- * Fetches all task definitions with pagination support and rate limiting.
+ * Fetches all task definition ARNs matching `params`.
+ *
+ * ListTaskDefinitions returns only ACTIVE revisions when `status` is omitted,
+ * so callers that need INACTIVE revisions must ask for them explicitly.
+ *
  * @param {ECS} ecs - AWS ECS client.
  * @param {Object} params - listTaskDefinitions parameters.
  * @param {Object} spinner - Optional ora spinner for progress updates.
  * @returns {Promise<Array<string>>} All task definition ARNs.
  */
 async function fetchAllTaskDefinitions(ecs, params = {}, spinner = null) {
-  const allArns = [];
-  let nextToken = null;
-  let retryCount = 0;
-  const maxRetries = 5;
-
-  do {
-    try {
-      const response = await ecs.listTaskDefinitions({
-        ...params,
-        nextToken: nextToken || undefined,
-        maxResults: 100, // AWS maximum
-      });
-
-      if (response.taskDefinitionArns) {
-        allArns.push(...response.taskDefinitionArns);
-      }
-
-      nextToken = response.nextToken;
-      retryCount = 0; // Reset retry count on success
-
-      // Add small delay between pagination calls to avoid rate limits
-      if (nextToken) {
-        await sleep(100);
-      }
-    } catch (err) {
-      if (err.name === 'ThrottlingException' || err.message.includes('Rate exceeded')) {
-        retryCount++;
-        if (retryCount > maxRetries) {
-          throw new Error(`Rate limit exceeded after ${maxRetries} retries. Please try again later.`, { cause: err });
-        }
-
-        // Exponential backoff: 1s, 2s, 4s, 8s, 16s
-        const backoffMs = Math.min(1000 * Math.pow(2, retryCount - 1), 16000);
-
-        // Update spinner instead of logging to avoid cluttering output
-        if (spinner) {
-          spinner.text = chalk.yellow(`⚠️  Rate limit, pausing ${backoffMs / 1000}s... (${retryCount}/${maxRetries})`);
-        }
-
-        await sleep(backoffMs);
-
-        // Restore spinner text after retry
-        if (spinner) {
-          spinner.text = `Fetching task definitions... (${allArns.length} found)`;
-        }
-        // Don't advance nextToken, retry the same page
-      } else {
-        throw err;
-      }
-    }
-  } while (nextToken);
-
-  return allArns;
+  return paginate(
+    (p) => ecs.listTaskDefinitions(p),
+    params,
+    "taskDefinitionArns",
+    { spinner, label: "Fetching task definitions..." },
+  );
 }
 
 /**
@@ -973,101 +1448,103 @@ async function fetchAllTaskDefinitions(ecs, params = {}, spinner = null) {
  * @returns {Promise<Array<{family: string, revisionCount: number, latestRevision: number, activeCount: number, inactiveCount: number}>>} Task definition families with details.
  */
 async function listTaskDefinitionFamilies(ecs, quiet = false) {
+  const spinner = quiet
+    ? null
+    : ora({
+        text: "Fetching task definition families...",
+        spinner: "dots",
+      }).start();
+
   try {
-    const spinner = quiet ? null : ora({
-      text: "Fetching task definition families...",
-      spinner: "dots",
-    }).start();
+    // ListTaskDefinitionFamilies returns the family names directly. The
+    // previous implementation listed every task definition in the account and
+    // grouped them client-side, then issued up to 100 describeTaskDefinition
+    // calls per family just to count ACTIVE vs INACTIVE.
+    const familyNames = await paginate(
+      (p) => ecs.listTaskDefinitionFamilies(p),
+      { status: "ALL" },
+      "families",
+    );
 
-    const taskDefinitionArns = await fetchAllTaskDefinitions(ecs, { sort: "DESC" }, spinner);
-
-    if (!taskDefinitionArns || taskDefinitionArns.length === 0) {
+    if (familyNames.length === 0) {
       if (spinner) spinner.warn("No task definitions found");
       return [];
     }
 
-    // Extract unique families from ARNs
-    const familyMap = new Map();
-
-    for (const arn of taskDefinitionArns) {
-      const parts = arn.split("/").pop().split(":");
-      const family = parts[0];
-      const revision = parseInt(parts[1]);
-
-      if (!familyMap.has(family)) {
-        familyMap.set(family, {
-          family,
-          latestRevision: revision,
-          revisions: [revision],
-        });
-      } else {
-        const familyData = familyMap.get(family);
-        familyData.revisions.push(revision);
-        if (revision > familyData.latestRevision) {
-          familyData.latestRevision = revision;
-        }
-      }
-    }
-
-    // Get detailed status for each family
-    const families = await Promise.all(
-      Array.from(familyMap.values()).map(async (familyData) => {
+    let completed = 0;
+    const skippedFamilies = [];
+    const families = await mapWithConcurrency(
+      familyNames,
+      FAMILY_DETAIL_CONCURRENCY,
+      async (family) => {
         try {
-          const familyArns = await fetchAllTaskDefinitions(ecs, {
-            familyPrefix: familyData.family,
-            sort: "DESC",
-          });
+          // Counting ARNs is exact and needs no describe calls: the revision
+          // number is part of the ARN and status is the filter.
+          const [activeArns, inactiveArns] = await Promise.all([
+            fetchAllTaskDefinitions(ecs, {
+              familyPrefix: family,
+              status: "ACTIVE",
+              sort: "DESC",
+            }),
+            fetchAllTaskDefinitions(ecs, {
+              familyPrefix: family,
+              status: "INACTIVE",
+              sort: "DESC",
+            }),
+          ]);
 
-          let activeCount = 0;
-          let inactiveCount = 0;
-
-          // Check status of first 100 revisions for count estimates (to avoid too many API calls)
-          const sampleSize = Math.min(familyArns.length, 100);
-          const revisionStatuses = await Promise.all(
-            familyArns.slice(0, sampleSize).map(async (arn) => {
-              try {
-                const { taskDefinition } = await ecs.describeTaskDefinition({
-                  taskDefinition: arn,
-                  include: ["TAGS"],
-                });
-                return taskDefinition.status;
-              } catch {
-                // Silently skip failed describe calls - they'll be excluded from counts
-                return null;
-              }
-            })
+          const revisions = [...activeArns, ...inactiveArns].map(
+            parseRevisionFromArn,
           );
-
-          revisionStatuses.forEach((status) => {
-            if (status === "ACTIVE") activeCount++;
-            else if (status === "INACTIVE") inactiveCount++;
-          });
-
-          // Extrapolate counts if we only sampled
-          if (familyArns.length > sampleSize) {
-            const ratio = familyArns.length / sampleSize;
-            activeCount = Math.round(activeCount * ratio);
-            inactiveCount = Math.round(inactiveCount * ratio);
-          }
+          if (revisions.length === 0) return null;
 
           return {
-            family: familyData.family,
-            revisionCount: familyArns.length,
-            latestRevision: familyData.latestRevision,
-            activeCount,
-            inactiveCount,
+            family,
+            revisionCount: revisions.length,
+            // Both listings are DESC, so the newest is the first of each.
+            latestRevision: Math.max(
+              parseRevisionFromArn(activeArns[0] ?? inactiveArns[0]),
+              parseRevisionFromArn(inactiveArns[0] ?? activeArns[0]),
+            ),
+            activeCount: activeArns.length,
+            inactiveCount: inactiveArns.length,
           };
-        } catch {
-          // Silently skip failed family details - they'll be filtered out
+        } catch (err) {
+          // Recorded rather than logged: writing to stdout here would corrupt
+          // the live spinner. Surfaced in the summary below.
+          skippedFamilies.push({ family, error: err.message });
           return null;
+        } finally {
+          completed += 1;
+          if (spinner) {
+            spinner.text = `Fetching task definition families... (${completed}/${familyNames.length})`;
+          }
         }
-      })
+      },
     );
 
-    if (spinner) spinner.succeed("Task definition families fetched");
-    return families.filter(Boolean).sort((a, b) => b.revisionCount - a.revisionCount);
+    if (spinner) {
+      spinner.succeed(
+        skippedFamilies.length > 0
+          ? `Task definition families fetched (${skippedFamilies.length} could not be read)`
+          : "Task definition families fetched",
+      );
+    }
+
+    if (skippedFamilies.length > 0) {
+      logger.warn(
+        chalk.yellow(
+          `⚠️  ${skippedFamilies.length} families could not be read and are not listed below (e.g. ${skippedFamilies[0].family}: ${skippedFamilies[0].error}).`,
+        ),
+      );
+    }
+
+    return families
+      .filter(Boolean)
+      .sort((a, b) => b.revisionCount - a.revisionCount);
   } catch (err) {
-    logger.error(chalk.red(err.message));
+    if (spinner?.isSpinning)
+      spinner.fail("Failed to fetch task definition families");
     throw err;
   }
 }
@@ -1078,49 +1555,76 @@ async function listTaskDefinitionFamilies(ecs, quiet = false) {
  * @param {string} family - Task definition family name.
  * @param {string} cluster - Cluster name (optional, for checking service usage).
  * @param {boolean} quiet - Whether to suppress spinner output.
- * @returns {Promise<{revisions: Array, protected: Array, inUse: Set, latest: number}>} Analysis results.
+ * @returns {Promise<{revisions: Array, protected: Array, inUse: Set, latest: number, skipped: number, listed: number}>} Analysis results.
  */
-async function analyzeTaskDefinitionRevisions(ecs, family, cluster = null, quiet = false) {
+async function analyzeTaskDefinitionRevisions(
+  ecs,
+  family,
+  cluster = null,
+  quiet = false,
+) {
+  const spinner = quiet
+    ? null
+    : ora({
+        text: "Analyzing task definition revisions...",
+        spinner: "dots",
+        color: "cyan",
+      }).start();
   try {
-    const spinner = quiet ? null : ora({
-      text: "Analyzing task definition revisions...",
-      spinner: "dots",
-      color: "cyan",
-    }).start();
+    // Both statuses, because ListTaskDefinitions lists only ACTIVE revisions
+    // when status is omitted. Without this the INACTIVE revisions the picker
+    // advertises are invisible here and the recommended INACTIVE bucket is
+    // always empty.
+    const [activeArns, inactiveArns] = await Promise.all([
+      fetchAllTaskDefinitions(
+        ecs,
+        { familyPrefix: family, status: "ACTIVE", sort: "DESC" },
+        spinner,
+      ),
+      fetchAllTaskDefinitions(
+        ecs,
+        { familyPrefix: family, status: "INACTIVE", sort: "DESC" },
+        spinner,
+      ),
+    ]);
+    const taskDefinitionArns = mergeRevisionArnsDesc(activeArns, inactiveArns);
 
-    // Get all revisions for this family with pagination
-    const taskDefinitionArns = await fetchAllTaskDefinitions(
-      ecs,
-      {
-        familyPrefix: family,
-        sort: "DESC",
-      },
-      spinner
-    );
-
-    if (!taskDefinitionArns || taskDefinitionArns.length === 0) {
+    if (taskDefinitionArns.length === 0) {
       if (spinner) spinner.warn("No revisions found");
-      return { revisions: [], protected: [], inUse: new Set(), latest: 0 };
+      return {
+        revisions: [],
+        protected: [],
+        inUse: new Set(),
+        latest: 0,
+        skipped: 0,
+        listed: 0,
+      };
     }
 
-    if (spinner) spinner.text = `Found ${taskDefinitionArns.length} revisions, analyzing...`;
+    if (spinner)
+      spinner.text = `Found ${taskDefinitionArns.length} revisions, analyzing...`;
 
-    // Find revisions in use by services
-    const inUseRevisions = new Set();
+    // Find revisions in use by services and standalone tasks
+    let inUseRevisions = new Set();
 
     if (cluster) {
       try {
-        const services = await listServices(ecs, cluster, true);
-        services.forEach((service) => {
-          inUseRevisions.add(service.taskDefinition);
-        });
+        inUseRevisions = await collectInUseTaskDefinitions(ecs, cluster);
       } catch (err) {
-        logger.warn(chalk.yellow(`Could not check service usage: ${err.message}`));
+        // Fail closed. Continuing with an empty in-use set would present
+        // revisions that are serving live traffic as safe to delete. The outer
+        // catch stops the spinner.
+        throw new Error(
+          `Unable to check service usage in cluster ${cluster}: ${err.message}. ` +
+            "Refusing to continue: pruning without this check could delete a revision that is in use.",
+          { cause: err },
+        );
       }
     }
 
     // Get detailed info for each revision (in batches to avoid rate limits)
-    if (spinner) spinner.text = `Fetching details for ${taskDefinitionArns.length} revisions...`;
+    if (spinner)
+      spinner.text = `Fetching details for ${taskDefinitionArns.length} revisions...`;
 
     const BATCH_SIZE = 20; // Reduced from 50 to avoid rate limits
     const BATCH_DELAY_MS = 500; // Delay between batches
@@ -1151,7 +1655,7 @@ async function analyzeTaskDefinitionRevisions(ecs, family, cluster = null, quiet
                 const revision = taskDefinition.revision;
                 const isLatest = index === 0; // First in DESC sorted list
                 const isInUse = inUseRevisions.has(arn);
-                const isInLatest5 = index < 5;
+                const isInLatest5 = index < KEEP_LATEST_COUNT;
 
                 return {
                   arn,
@@ -1164,32 +1668,46 @@ async function analyzeTaskDefinitionRevisions(ecs, family, cluster = null, quiet
                   isInUse,
                   isInLatest5,
                   isProtected: isLatest || isInUse,
-                  containerImages: taskDefinition.containerDefinitions.map(c => ({
-                    name: c.name,
-                    image: c.image,
-                  })),
+                  containerImages: taskDefinition.containerDefinitions.map(
+                    (c) => ({
+                      name: c.name,
+                      image: c.image,
+                    }),
+                  ),
                 };
               } catch (err) {
-                if (err.name === 'ThrottlingException' || err.message.includes('Rate exceeded')) {
+                if (
+                  err.name === "ThrottlingException" ||
+                  err.message.includes("Rate exceeded")
+                ) {
                   throw err; // Propagate to batch retry logic
                 }
                 // Silently skip failed describe calls - they'll be filtered out
                 return null;
               }
-            })
+            }),
           );
 
           // Success - break retry loop
           break;
         } catch (err) {
-          if (err.name === 'ThrottlingException' || err.message.includes('Rate exceeded')) {
+          if (
+            err.name === "ThrottlingException" ||
+            err.message.includes("Rate exceeded")
+          ) {
             retryCount++;
             if (retryCount > maxRetries) {
-              throw new Error(`Rate limit exceeded after ${maxRetries} retries on batch ${i / BATCH_SIZE + 1}. Please try again later.`, { cause: err });
+              throw new Error(
+                `Rate limit exceeded after ${maxRetries} retries on batch ${i / BATCH_SIZE + 1}. Please try again later.`,
+                { cause: err },
+              );
             }
 
             // Exponential backoff
-            const backoffMs = Math.min(2000 * Math.pow(2, retryCount - 1), 10000);
+            const backoffMs = Math.min(
+              2000 * Math.pow(2, retryCount - 1),
+              10000,
+            );
             if (spinner) {
               spinner.text = `Rate limit hit, pausing ${backoffMs}ms... (${retryCount}/${maxRetries})`;
             }
@@ -1208,19 +1726,43 @@ async function analyzeTaskDefinitionRevisions(ecs, family, cluster = null, quiet
       }
     }
 
-    const latest = revisions.length > 0 ? revisions[0].revision : 0;
-    const protectedRevisions = revisions.filter(r => r.isProtected);
+    // Derived from the listing, not from revisions[0]: a failed describe on the
+    // newest revision would otherwise silently report the second-newest as the
+    // latest and drop the "latest is always protected" guarantee.
+    const latest = parseRevisionFromArn(taskDefinitionArns[0]);
 
-    if (spinner) spinner.succeed(`Analysis complete: ${revisions.length} revisions loaded`);
+    // Describe failures are skipped rather than fatal, but a destructive
+    // command must not silently analyse fewer revisions than it listed.
+    const skipped = taskDefinitionArns.length - revisions.length;
+    const protectedRevisions = revisions.filter((r) => r.isProtected);
+
+    if (spinner) {
+      spinner.succeed(
+        skipped > 0
+          ? `Analysis complete: ${revisions.length} revisions loaded, ${skipped} could not be read`
+          : `Analysis complete: ${revisions.length} revisions loaded`,
+      );
+    }
+
+    if (skipped > 0) {
+      logger.warn(
+        chalk.yellow(
+          `⚠️  ${skipped} of ${taskDefinitionArns.length} revisions could not be read and were excluded from this analysis. They will not be deleted, but the counts below are incomplete.`,
+        ),
+      );
+    }
 
     return {
       revisions,
       protected: protectedRevisions,
       inUse: inUseRevisions,
       latest,
+      skipped,
+      listed: taskDefinitionArns.length,
     };
   } catch (err) {
-    logger.error(chalk.red(err.message));
+    if (spinner?.isSpinning)
+      spinner.fail("Failed to analyze task definition revisions");
     throw err;
   }
 }
@@ -1240,14 +1782,16 @@ async function selectTaskDefinitionFamily(ecs) {
 
   const choices = families.map((f) => {
     const hasInactive = f.inactiveCount > 0;
-    const cleanupAvailable = f.revisionCount > 5;
+    const cleanupAvailable = f.revisionCount > KEEP_LATEST_COUNT;
 
     const statusBadge = hasInactive
       ? chalk.yellow(`${f.inactiveCount} inactive`)
       : chalk.green("all active");
 
     const cleanupBadge = cleanupAvailable
-      ? chalk.cyan(` [${f.revisionCount - 5} beyond latest 5]`)
+      ? chalk.cyan(
+          ` [${f.revisionCount - KEEP_LATEST_COUNT} beyond latest ${KEEP_LATEST_COUNT}]`,
+        )
       : "";
 
     return {
@@ -1269,7 +1813,8 @@ async function selectTaskDefinitionFamily(ecs) {
         return choices.filter(
           (choice) =>
             choice.title.toLowerCase().includes(inputLower) ||
-            (choice.description && choice.description.toLowerCase().includes(inputLower))
+            (choice.description &&
+              choice.description.toLowerCase().includes(inputLower)),
         );
       },
     },
@@ -1278,15 +1823,59 @@ async function selectTaskDefinitionFamily(ecs) {
         logger.info(chalk.dim("\nOperation cancelled"));
         process.exit(0);
       },
-    }
+    },
   );
 
   if (wasPromptCancelled(response, "family")) {
-    logger.info(chalk.dim("Operation cancelled"));
-    process.exit(0);
+    cancelOperation();
   }
 
   return response.family;
+}
+
+/**
+ * Splits revisions into the buckets the bulk selection options offer.
+ *
+ * A revision is deletable only when it is neither protected (latest / in use by
+ * a service) nor inside the latest-N window the prune command promises to keep.
+ * Every bucket is derived from that one list, so no option can reach past the
+ * promise the command prints to the user.
+ *
+ * @param {Array} revisions - Revisions in DESC order, as returned by analyzeTaskDefinitionRevisions.
+ * @param {number} now - Current time in milliseconds, injected for testability.
+ * @returns {{deletable: Array, inactiveBeyondLatestN: Array, beyondLatest10: Array, revisionsByAge: Object, ageBuckets: number[]}}
+ */
+function computeDeletionBuckets(revisions, now = Date.now()) {
+  const deletable = revisions.filter((r) => !r.isProtected && !r.isInLatest5);
+  const inactiveBeyondLatestN = deletable.filter(
+    (r) => r.status === "INACTIVE",
+  );
+
+  // Position in the DESC-sorted list, precomputed so the "beyond latest N"
+  // filter does not run indexOf per element.
+  const positionByRevision = new Map(revisions.map((r, i) => [r, i]));
+  const beyondLatest10 = deletable.filter(
+    (r) => positionByRevision.get(r) >= 10,
+  );
+
+  const ageBuckets = [30, 90, 180, 365];
+  const revisionsByAge = Object.fromEntries(
+    ageBuckets.map((days) => [
+      days,
+      deletable.filter(
+        (r) =>
+          now - new Date(r.createdAt).getTime() > days * 24 * 60 * 60 * 1000,
+      ),
+    ]),
+  );
+
+  return {
+    deletable,
+    inactiveBeyondLatestN,
+    beyondLatest10,
+    revisionsByAge,
+    ageBuckets,
+  };
 }
 
 /**
@@ -1295,67 +1884,55 @@ async function selectTaskDefinitionFamily(ecs) {
  * @returns {Promise<Array>} Selected revision objects.
  */
 async function selectRevisionsToDelete(revisions) {
-  const eligible = revisions.filter(r => !r.isProtected);
-  const inactiveBeyondLatest5 = revisions.filter(r => !r.isProtected && !r.isInLatest5 && r.status === "INACTIVE");
-
-  // Calculate age-based counts
-  const now = new Date();
-  const revisionsByAge = {
-    "30days": revisions.filter(r => !r.isProtected && (now - new Date(r.createdAt)) > 30 * 24 * 60 * 60 * 1000),
-    "90days": revisions.filter(r => !r.isProtected && (now - new Date(r.createdAt)) > 90 * 24 * 60 * 60 * 1000),
-    "180days": revisions.filter(r => !r.isProtected && (now - new Date(r.createdAt)) > 180 * 24 * 60 * 60 * 1000),
-    "365days": revisions.filter(r => !r.isProtected && (now - new Date(r.createdAt)) > 365 * 24 * 60 * 60 * 1000),
-  };
+  const {
+    deletable,
+    inactiveBeyondLatestN,
+    beyondLatest10,
+    revisionsByAge,
+    ageBuckets,
+  } = computeDeletionBuckets(revisions);
 
   console.log(chalk.blue("\n📋 Selection Options:\n"));
 
   const selectionChoices = [
     {
-      title: chalk.green(`All INACTIVE revisions beyond latest 5 (${inactiveBeyondLatest5.length} revisions)`),
-      description: "Recommended: Safe bulk deletion of unused, inactive revisions",
-      value: "inactive_beyond_5",
-      disabled: inactiveBeyondLatest5.length === 0,
+      title: chalk.green(
+        `All INACTIVE revisions beyond latest ${KEEP_LATEST_COUNT} (${inactiveBeyondLatestN.length} revisions)`,
+      ),
+      description:
+        "Recommended: Safe bulk deletion of unused, inactive revisions",
+      value: "inactive_beyond_keep",
+      disabled: inactiveBeyondLatestN.length === 0,
     },
     {
-      title: chalk.yellow(`All revisions beyond latest 10 (${revisions.filter(r => !r.isProtected && revisions.indexOf(r) >= 10).length} revisions)`),
+      title: chalk.yellow(
+        `All revisions beyond latest 10 (${beyondLatest10.length} revisions)`,
+      ),
       description: "Keep more history, delete everything else",
       value: "beyond_10",
-      disabled: revisions.filter(r => !r.isProtected && revisions.indexOf(r) >= 10).length === 0,
+      disabled: beyondLatest10.length === 0,
     },
-    {
-      title: chalk.cyan(`Revisions older than 30 days (${revisionsByAge["30days"].length} revisions)`),
+    ...ageBuckets.map((days) => ({
+      title: chalk.cyan(
+        days === 365
+          ? `Revisions older than 1 year (${revisionsByAge[days].length} revisions)`
+          : `Revisions older than ${days} days (${revisionsByAge[days].length} revisions)`,
+      ),
       description: "Age-based cleanup",
-      value: "age_30",
-      disabled: revisionsByAge["30days"].length === 0,
-    },
-    {
-      title: chalk.cyan(`Revisions older than 90 days (${revisionsByAge["90days"].length} revisions)`),
-      description: "Age-based cleanup",
-      value: "age_90",
-      disabled: revisionsByAge["90days"].length === 0,
-    },
-    {
-      title: chalk.cyan(`Revisions older than 180 days (${revisionsByAge["180days"].length} revisions)`),
-      description: "Age-based cleanup",
-      value: "age_180",
-      disabled: revisionsByAge["180days"].length === 0,
-    },
-    {
-      title: chalk.cyan(`Revisions older than 1 year (${revisionsByAge["365days"].length} revisions)`),
-      description: "Age-based cleanup",
-      value: "age_365",
-      disabled: revisionsByAge["365days"].length === 0,
-    },
+      value: `age_${days}`,
+      disabled: revisionsByAge[days].length === 0,
+    })),
     {
       title: chalk.magenta("Manual selection (checkbox list)"),
-      description: `Choose specific revisions from ${eligible.length} eligible`,
+      description: `Choose specific revisions from ${deletable.length} eligible`,
       value: "manual",
-      disabled: eligible.length === 0,
+      disabled: deletable.length === 0,
     },
     {
       title: chalk.red("Custom: Select by revision number range"),
       description: "Specify exact revision range to delete",
       value: "range",
+      disabled: deletable.length === 0,
     },
   ];
 
@@ -1366,12 +1943,7 @@ async function selectRevisionsToDelete(revisions) {
       message: chalk.blue("How would you like to select revisions to delete?"),
       choices: selectionChoices,
     },
-    {
-      onCancel: () => {
-        logger.info(chalk.dim("\nOperation cancelled"));
-        process.exit(0);
-      },
-    }
+    { onCancel: cancelOperation },
   );
 
   if (wasPromptCancelled(methodResponse, "method")) {
@@ -1380,129 +1952,101 @@ async function selectRevisionsToDelete(revisions) {
   }
 
   let selected;
+  const method = methodResponse.method;
 
-  switch (methodResponse.method) {
-    case "inactive_beyond_5":
-      selected = inactiveBeyondLatest5;
-      break;
-
-    case "beyond_10":
-      selected = revisions.filter(r => !r.isProtected && revisions.indexOf(r) >= 10);
-      break;
-
-    case "age_30":
-      selected = revisionsByAge["30days"];
-      break;
-
-    case "age_90":
-      selected = revisionsByAge["90days"];
-      break;
-
-    case "age_180":
-      selected = revisionsByAge["180days"];
-      break;
-
-    case "age_365":
-      selected = revisionsByAge["365days"];
-      break;
-
-    case "range": {
-      const rangeResponse = await prompts(
-        [
-          {
-            type: "number",
-            name: "from",
-            message: chalk.blue("Delete from revision number:"),
-            validate: value => value > 0 || "Must be a positive number",
-          },
-          {
-            type: "number",
-            name: "to",
-            message: chalk.blue("Delete to revision number (inclusive):"),
-            validate: value => value > 0 || "Must be a positive number",
-          },
-        ],
+  if (method === "inactive_beyond_keep") {
+    selected = inactiveBeyondLatestN;
+  } else if (method === "beyond_10") {
+    selected = beyondLatest10;
+  } else if (method.startsWith("age_")) {
+    selected = revisionsByAge[Number(method.slice(4))];
+  } else if (method === "range") {
+    const rangeResponse = await prompts(
+      [
         {
-          onCancel: () => {
-            logger.info(chalk.dim("\nOperation cancelled"));
-            process.exit(0);
-          },
-        }
-      );
-
-      if (wasPromptCancelled(rangeResponse, "from") || wasPromptCancelled(rangeResponse, "to")) {
-        logger.info(chalk.dim("Operation cancelled"));
-        return [];
-      }
-
-      if (rangeResponse.from && rangeResponse.to) {
-        const from = Math.min(rangeResponse.from, rangeResponse.to);
-        const to = Math.max(rangeResponse.from, rangeResponse.to);
-
-        selected = revisions.filter(r => !r.isProtected && r.revision >= from && r.revision <= to);
-
-        if (selected.length === 0) {
-          logger.warn(chalk.yellow(`No revisions found in range ${from}-${to}`));
-          return [];
-        }
-      } else {
-        logger.info(chalk.dim("Operation cancelled"));
-        return [];
-      }
-      break;
-    }
-
-    case "manual": {
-      // For manual selection, limit to showing first 100 eligible revisions to avoid overwhelming the UI
-      const revisionsToShow = eligible.slice(0, 100);
-
-      if (eligible.length > 100) {
-        console.log(chalk.yellow(`\n⚠️  Showing first 100 of ${eligible.length} eligible revisions. Consider using bulk options instead.\n`));
-      }
-
-      const choices = revisionsToShow.map((rev) => {
-        const date = new Date(rev.createdAt).toLocaleDateString();
-        const size = (rev.size / 1024).toFixed(1);
-
-        let statusBadge;
-        let reasonBadge = "";
-
-        if (rev.isInLatest5) {
-          statusBadge = chalk.cyan("KEEP");
-          reasonBadge = chalk.dim(" (within latest 5)");
-        } else if (rev.status === "INACTIVE") {
-          statusBadge = chalk.yellow("INACTIVE");
-          reasonBadge = chalk.red(" ← suggested");
-        } else {
-          statusBadge = chalk.green("ACTIVE");
-        }
-
-        return {
-          name: `Revision ${rev.revision} - ${statusBadge} - ${date}, ${size} KB${reasonBadge}`,
-          value: rev,
-          checked: !rev.isInLatest5 && rev.status === "INACTIVE",
-        };
-      });
-
-      const manualResponse = await inquirer.prompt([
-        {
-          type: "checkbox",
-          name: "selected",
-          message: chalk.blue("Select revisions to delete (Space to toggle, Enter to confirm):"),
-          prefix: "🗑️ ",
-          choices,
-          pageSize: 20,
-          loop: false,
+          type: "number",
+          name: "from",
+          message: chalk.blue("Delete from revision number:"),
+          validate: (value) => value > 0 || "Must be a positive number",
         },
-      ]);
+        {
+          type: "number",
+          name: "to",
+          message: chalk.blue("Delete to revision number (inclusive):"),
+          validate: (value) => value > 0 || "Must be a positive number",
+        },
+      ],
+      { onCancel: cancelOperation },
+    );
 
-      selected = manualResponse.selected || [];
-      break;
+    if (
+      wasPromptCancelled(rangeResponse, "from") ||
+      wasPromptCancelled(rangeResponse, "to")
+    ) {
+      logger.info(chalk.dim("Operation cancelled"));
+      return [];
     }
 
-    default:
-      logger.warn(chalk.yellow("Unknown selection method"));
+    const from = Math.min(rangeResponse.from, rangeResponse.to);
+    const to = Math.max(rangeResponse.from, rangeResponse.to);
+
+    selected = deletable.filter((r) => r.revision >= from && r.revision <= to);
+
+    if (selected.length === 0) {
+      logger.warn(
+        chalk.yellow(
+          `No deletable revisions found in range ${from}-${to}. Protected revisions and the latest ${KEEP_LATEST_COUNT} are excluded.`,
+        ),
+      );
       return [];
+    }
+  } else if (method === "manual") {
+    // Cap the rendered list; a family with thousands of revisions makes an
+    // unusable checkbox and the bulk options exist for that case.
+    const revisionsToShow = deletable.slice(0, MANUAL_SELECTION_LIMIT);
+
+    if (deletable.length > MANUAL_SELECTION_LIMIT) {
+      console.log(
+        chalk.yellow(
+          `\n⚠️  Showing first ${MANUAL_SELECTION_LIMIT} of ${deletable.length} eligible revisions. Consider using bulk options instead.\n`,
+        ),
+      );
+    }
+
+    const choices = revisionsToShow.map((rev) => {
+      const date = new Date(rev.createdAt).toLocaleDateString();
+      const size = (rev.size / 1024).toFixed(1);
+      const isInactive = rev.status === "INACTIVE";
+
+      const statusBadge = isInactive
+        ? chalk.yellow("INACTIVE")
+        : chalk.green("ACTIVE");
+      const reasonBadge = isInactive ? chalk.red(" ← suggested") : "";
+
+      return {
+        title: `Revision ${rev.revision} - ${statusBadge} - ${date}, ${size} KB${reasonBadge}`,
+        value: rev,
+        selected: isInactive,
+      };
+    });
+
+    const manualResponse = await prompts(
+      {
+        type: "multiselect",
+        name: "selected",
+        message: chalk.blue(
+          "Select revisions to delete (Space to toggle, Enter to confirm):",
+        ),
+        choices,
+        optionsPerPage: 20,
+      },
+      { onCancel: cancelOperation },
+    );
+
+    selected = manualResponse.selected || [];
+  } else {
+    logger.warn(chalk.yellow("Unknown selection method"));
+    return [];
   }
 
   if (selected.length === 0) {
@@ -1510,7 +2054,9 @@ async function selectRevisionsToDelete(revisions) {
     return [];
   }
 
-  console.log(chalk.green(`\n✅ Selected ${selected.length} revision(s) for deletion\n`));
+  console.log(
+    chalk.green(`\n✅ Selected ${selected.length} revision(s) for deletion\n`),
+  );
   return selected;
 }
 
@@ -1521,10 +2067,11 @@ async function selectRevisionsToDelete(revisions) {
  * @returns {Object} Deletion plan with statistics.
  */
 function generateDeletionPlan(allRevisions, selectedRevisions) {
-  const toDeregister = selectedRevisions.filter(r => r.status === "ACTIVE");
-  const toDelete = selectedRevisions.filter(r => r.status === "INACTIVE");
-  const protectedRevisions = allRevisions.filter(r => r.isProtected);
-  const kept = allRevisions.filter(r => !selectedRevisions.includes(r));
+  const toDeregister = selectedRevisions.filter((r) => r.status === "ACTIVE");
+  const toDelete = selectedRevisions.filter((r) => r.status === "INACTIVE");
+  const protectedRevisions = allRevisions.filter((r) => r.isProtected);
+  const selectedSet = new Set(selectedRevisions);
+  const kept = allRevisions.filter((r) => !selectedSet.has(r));
 
   return {
     total: allRevisions.length,
@@ -1551,11 +2098,13 @@ async function deregisterTaskDefinitions(ecs, revisionArns, quiet = false) {
   const success = [];
   const failed = [];
 
-  const spinner = quiet ? null : ora({
-    text: "Deregistering task definitions...",
-    spinner: "dots",
-    color: "yellow",
-  }).start();
+  const spinner = quiet
+    ? null
+    : ora({
+        text: "Deregistering task definitions...",
+        spinner: "dots",
+        color: "yellow",
+      }).start();
   const DELAY_MS = 200; // Delay between each deregister call
   const maxRetries = 3;
 
@@ -1574,7 +2123,10 @@ async function deregisterTaskDefinitions(ecs, revisionArns, quiet = false) {
           spinner.text = `Deregistered ${success.length}/${revisionArns.length}...`;
         }
       } catch (err) {
-        if (err.name === 'ThrottlingException' || err.message.includes('Rate exceeded')) {
+        if (
+          err.name === "ThrottlingException" ||
+          err.message.includes("Rate exceeded")
+        ) {
           retryCount++;
           if (retryCount > maxRetries) {
             failed.push({ arn, error: err.message });
@@ -1583,7 +2135,9 @@ async function deregisterTaskDefinitions(ecs, revisionArns, quiet = false) {
             // Exponential backoff: 1s, 2s, 4s
             const backoffMs = 1000 * Math.pow(2, retryCount - 1);
             if (spinner) {
-              spinner.text = chalk.yellow(`⚠️  Rate limit, pausing ${backoffMs / 1000}s... (attempt ${retryCount}/${maxRetries})`);
+              spinner.text = chalk.yellow(
+                `⚠️  Rate limit, pausing ${backoffMs / 1000}s... (attempt ${retryCount}/${maxRetries})`,
+              );
             }
             await sleep(backoffMs);
             if (spinner) {
@@ -1626,11 +2180,13 @@ async function deleteTaskDefinitions(ecs, revisionArns, quiet = false) {
   const success = [];
   const failed = [];
 
-  const spinner = quiet ? null : ora({
-    text: "Deleting task definitions...",
-    spinner: "dots",
-    color: "red",
-  }).start();
+  const spinner = quiet
+    ? null
+    : ora({
+        text: "Deleting task definitions...",
+        spinner: "dots",
+        color: "red",
+      }).start();
 
   // AWS allows batch deletion of up to 10 task definitions at a time
   const BATCH_SIZE = 10;
@@ -1661,8 +2217,9 @@ async function deleteTaskDefinitions(ecs, revisionArns, quiet = false) {
         }
 
         // Track successful deletions
-        const successfulArns = batch.filter(arn =>
-          !response.failures || !response.failures.find(f => f.arn === arn)
+        const successfulArns = batch.filter(
+          (arn) =>
+            !response.failures || !response.failures.find((f) => f.arn === arn),
         );
         success.push(...successfulArns);
         batchSuccess = true;
@@ -1671,18 +2228,26 @@ async function deleteTaskDefinitions(ecs, revisionArns, quiet = false) {
           spinner.text = `Deleted batch ${i + 1}/${batches.length} (${success.length} total)...`;
         }
       } catch (err) {
-        if (err.name === 'ThrottlingException' || err.message.includes('Rate exceeded')) {
+        if (
+          err.name === "ThrottlingException" ||
+          err.message.includes("Rate exceeded")
+        ) {
           retryCount++;
           if (retryCount > maxRetries) {
             batch.forEach((arn) => {
-              failed.push({ arn, error: `Rate limit exceeded after ${maxRetries} retries` });
+              failed.push({
+                arn,
+                error: `Rate limit exceeded after ${maxRetries} retries`,
+              });
             });
             // Don't log here - will be reported in final summary
           } else {
             // Exponential backoff: 1s, 2s, 4s
             const backoffMs = 1000 * Math.pow(2, retryCount - 1);
             if (spinner) {
-              spinner.text = chalk.yellow(`⚠️  Rate limit, pausing ${backoffMs / 1000}s... (attempt ${retryCount}/${maxRetries})`);
+              spinner.text = chalk.yellow(
+                `⚠️  Rate limit, pausing ${backoffMs / 1000}s... (attempt ${retryCount}/${maxRetries})`,
+              );
             }
             await sleep(backoffMs);
             if (spinner) {
@@ -1723,8 +2288,12 @@ async function deleteTaskDefinitions(ecs, revisionArns, quiet = false) {
  * @returns {Promise<Object>} Summary statistics.
  */
 async function performPruning(ecs, selectedRevisions) {
-  const activeRevisions = selectedRevisions.filter(r => r.status === "ACTIVE");
-  const inactiveRevisions = selectedRevisions.filter(r => r.status === "INACTIVE");
+  const activeRevisions = selectedRevisions.filter(
+    (r) => r.status === "ACTIVE",
+  );
+  const inactiveRevisions = selectedRevisions.filter(
+    (r) => r.status === "INACTIVE",
+  );
 
   logger.info(chalk.blue("\n🚀 Starting pruning operation...\n"));
 
@@ -1735,20 +2304,30 @@ async function performPruning(ecs, selectedRevisions) {
 
   // Phase 1: Deregister ACTIVE revisions
   if (activeRevisions.length > 0) {
-    logger.info(chalk.yellow(`Phase 1: Deregistering ${activeRevisions.length} ACTIVE revisions...`));
-    const deregisterArns = activeRevisions.map(r => r.arn);
+    logger.info(
+      chalk.yellow(
+        `Phase 1: Deregistering ${activeRevisions.length} ACTIVE revisions...`,
+      ),
+    );
+    const deregisterArns = activeRevisions.map((r) => r.arn);
     results.deregister = await deregisterTaskDefinitions(ecs, deregisterArns);
   }
 
   // Phase 2: Delete INACTIVE revisions (including newly deregistered ones)
   const revisionsToDelete = [
     ...inactiveRevisions,
-    ...activeRevisions.filter(r => results.deregister.success.includes(r.arn)),
+    ...activeRevisions.filter((r) =>
+      results.deregister.success.includes(r.arn),
+    ),
   ];
 
   if (revisionsToDelete.length > 0) {
-    logger.info(chalk.yellow(`\nPhase 2: Deleting ${revisionsToDelete.length} INACTIVE revisions...`));
-    const deleteArns = revisionsToDelete.map(r => r.arn);
+    logger.info(
+      chalk.yellow(
+        `\nPhase 2: Deleting ${revisionsToDelete.length} INACTIVE revisions...`,
+      ),
+    );
+    const deleteArns = revisionsToDelete.map((r) => r.arn);
     results.delete = await deleteTaskDefinitions(ecs, deleteArns);
   }
 
@@ -1767,8 +2346,8 @@ function checkAwsCliInstalled() {
   try {
     execSync("aws --version", { stdio: "ignore" });
     return true;
-  } catch (err) {
-    logger.error(chalk.red(err.message));
+  } catch {
+    // A missing binary is the answer to the check, not an error to report.
     return false;
   }
 }
@@ -1781,8 +2360,7 @@ function checkSessionManagerPluginInstalled() {
   try {
     execSync("session-manager-plugin --version", { stdio: "ignore" });
     return true;
-  } catch (err) {
-    logger.error(chalk.red(err.message));
+  } catch {
     return false;
   }
 }
@@ -1792,23 +2370,26 @@ function checkSessionManagerPluginInstalled() {
  * @returns {boolean} True if configured, false otherwise.
  */
 function checkAwsCredentials() {
-  const credentialsPath = path.join(os.homedir(), ".aws", "credentials");
-  const configPath = path.join(os.homedir(), ".aws", "config");
-  return fs.existsSync(credentialsPath) || fs.existsSync(configPath);
+  return fs.existsSync(getCredentialsPath()) || fs.existsSync(getConfigPath());
 }
 
 /**
  * Checks if the configured AWS profile is valid.
- * @returns {boolean} True if valid, false otherwise.
+ *
+ * Reads through the same re-syncing path as initAWS: the raw cache is empty on
+ * a fresh install, which made diagnostics report a perfectly good profile as
+ * unconfigured.
+ *
+ * @returns {Promise<boolean>} True if valid, false otherwise.
  */
-function checkAwsProfileConfigured() {
-  const profiles = config.get("awsProfiles");
-  const currentProfile = config.get("awsProfile");
-  return profiles.includes(currentProfile);
+async function checkAwsProfileConfigured() {
+  const profile = getActiveProfile();
+  return (await getAwsProfilesIncluding(profile)).includes(profile);
 }
 
 /**
  * Performs diagnostics to check environment setup.
+ * @returns {Promise<boolean>} True when every check passed.
  */
 async function performDiagnostics() {
   let allGood = true;
@@ -1836,18 +2417,14 @@ async function performDiagnostics() {
     logger.info(chalk.green("✅ AWS credentials are configured."));
   }
 
-  if (!checkAwsProfileConfigured()) {
+  if (!(await checkAwsProfileConfigured())) {
     logger.error(
-      chalk.red(
-        `❌ AWS profile '${config.get("awsProfile")}' is not configured.`,
-      ),
+      chalk.red(`❌ AWS profile '${getActiveProfile()}' is not configured.`),
     );
     allGood = false;
   } else {
     logger.info(
-      chalk.green(
-        `✅ AWS profile '${config.get("awsProfile")}' is configured.`,
-      ),
+      chalk.green(`✅ AWS profile '${getActiveProfile()}' is configured.`),
     );
   }
 
@@ -1864,6 +2441,8 @@ async function performDiagnostics() {
       ),
     );
   }
+
+  return allGood;
 }
 
 // ---------------------------------------------------------------------------
@@ -1872,12 +2451,20 @@ async function performDiagnostics() {
 const program = new Command();
 
 program
-  .name(chalk.cyan("taskonaut"))
+  // Plain text: the name is used in usage strings and shell completions, where
+  // embedded ANSI escapes would leak through.
+  .name("taskonaut")
   .description(
-    chalk.yellow("✨ Interactive ECS task executor, rollback tool, and task definition cleanup utility"),
+    "✨ Interactive ECS task executor, rollback tool, and task definition cleanup utility",
   )
-  .addHelpText("after", chalk.dim("Example: taskonaut "))
-  .action(async () => {
+  .version(packageJson.version, "-v, --version", "Print the installed version")
+  .option(
+    "-c, --command <command>",
+    "Command to run in the container",
+    DEFAULT_EXEC_COMMAND,
+  )
+  .addHelpText("after", chalk.dim("Example: taskonaut --command /bin/bash"))
+  .action(async (options) => {
     try {
       const ecs = await initAWS();
       let cluster = await selectCluster(ecs);
@@ -1900,7 +2487,12 @@ program
               `🚀 Connecting to container ${chalk.bold(containerName)}...`,
             ),
           );
-          await executeCommand(cluster, taskArn, containerName);
+          await executeCommand(
+            cluster,
+            taskArn,
+            containerName,
+            options.command,
+          );
           return; // End after session completes.
         }
       }
@@ -1923,38 +2515,68 @@ program
           const profiles = await getAwsProfiles();
           spinner.succeed("AWS profiles loaded");
 
-          const { profile } = await inquirer.prompt([
-            {
-              type: "select",
-              name: "profile",
-              message: chalk.blue("Select AWS Profile:"),
-              prefix: "🔑",
-              choices: profiles.map((p) => ({
-                name: chalk.green(p),
-                value: p,
-              })),
-              default: config.get("awsProfile"),
-            },
-          ]);
+          if (profiles.length === 0) {
+            logger.error(
+              chalk.red(
+                "No AWS profiles found. Configure one with `aws configure` or `aws sso login` first.",
+              ),
+            );
+            process.exit(1);
+          }
 
-          const { region } = await inquirer.prompt([
-            {
-              type: "select",
-              name: "region",
-              message: chalk.blue("Select AWS Region:"),
-              prefix: "🌎",
-              choices: AWS_REGIONS.map((r) => ({
-                name: chalk.green(r),
-                value: r,
-              })),
-              default: config.get("awsRegion"),
-            },
-          ]);
+          const profileChoices = profiles.map((p) => ({
+            title: chalk.green(p),
+            value: p,
+          }));
+          const regionChoices = AWS_REGIONS.map((r) => ({
+            title: chalk.green(r),
+            value: r,
+          }));
+
+          const { profile, region } = await prompts(
+            [
+              {
+                type: "autocomplete",
+                name: "profile",
+                message: chalk.blue("🔑 Select AWS Profile:"),
+                choices: profileChoices,
+                initial: Math.max(
+                  profileChoices.findIndex(
+                    (c) => c.value === config.get("awsProfile"),
+                  ),
+                  0,
+                ),
+                hint: "- Type to search, use arrows to navigate",
+              },
+              {
+                type: "autocomplete",
+                name: "region",
+                message: chalk.blue("🌎 Select AWS Region:"),
+                choices: regionChoices,
+                initial: Math.max(
+                  regionChoices.findIndex(
+                    (c) => c.value === config.get("awsRegion"),
+                  ),
+                  0,
+                ),
+                hint: "- Type to search, use arrows to navigate",
+              },
+            ],
+            { onCancel: cancelOperation },
+          );
 
           config.set("awsProfile", profile);
           config.set("awsRegion", region);
 
           logger.info(chalk.green("✨ Configuration saved successfully!"));
+
+          if (process.env.AWS_PROFILE || process.env.AWS_REGION) {
+            logger.warn(
+              chalk.yellow(
+                "Note: AWS_PROFILE / AWS_REGION are set in your environment and take precedence over this configuration.",
+              ),
+            );
+          }
         } catch (err) {
           logger.error(chalk.red(err.message));
           process.exit(1);
@@ -1965,13 +2587,27 @@ program
     new Command("show")
       .alias("path")
       .description("Show configuration path and current values")
-      .action(async () => {
+      .option("--json", "Print the configuration as JSON and nothing else")
+      .addHelpText(
+        "after",
+        chalk.dim("Example: taskonaut config show --json | jq ."),
+      )
+      .action(async (options) => {
         try {
-          const spinner = ora("Reading configuration...").start();
           const configDetails = {
             path: config.path,
             values: config.store,
           };
+
+          // --json writes only JSON to stdout: no spinner, no headings, no
+          // colour. Suppressing the banner alone did not make this pipeable,
+          // because the headings below go to stdout too.
+          if (options.json) {
+            console.log(JSON.stringify(configDetails, null, 2));
+            return;
+          }
+
+          const spinner = ora("Reading configuration...").start();
           spinner.succeed("Configuration loaded");
           console.log("\n" + chalk.blue.bold("Configuration Details:"));
           console.log(chalk.dim("Path:"), chalk.green(configDetails.path));
@@ -1991,16 +2627,17 @@ program
       .description("Remove all stored configuration")
       .action(async () => {
         try {
-          const { confirm } = await inquirer.prompt([
+          const { confirm } = await prompts(
             {
               type: "confirm",
               name: "confirm",
               message: chalk.yellow(
                 "⚠️  Are you sure you want to remove all stored configuration?",
               ),
-              default: false,
+              initial: false,
             },
-          ]);
+            { onCancel: cancelOperation },
+          );
 
           if (confirm) {
             const spinner = ora("Cleaning up configuration...").start();
@@ -2021,7 +2658,8 @@ program
   .description("Run diagnostics to check your environment setup")
   .action(async () => {
     try {
-      await performDiagnostics();
+      const allGood = await performDiagnostics();
+      if (!allGood) process.exitCode = 1;
     } catch (err) {
       logger.error(chalk.red("Diagnostics failed: " + err.message));
       process.exit(1);
@@ -2164,10 +2802,9 @@ program
         console.log(`  🧠 Memory: ${comparison.current.memory}`);
       if (comparison.current.images && comparison.current.images.length > 0) {
         comparison.current.images.forEach((img) => {
-          const imageTag = img.image.includes(":")
-            ? img.image.split(":").pop()
-            : "latest";
-          console.log(`  🐳 ${chalk.cyan(img.name)}: ${chalk.dim(imageTag)}`);
+          console.log(
+            `  🐳 ${chalk.cyan(img.name)}: ${chalk.dim(parseImageTag(img.image))}`,
+          );
         });
       }
 
@@ -2182,10 +2819,9 @@ program
         console.log(`  🧠 Memory: ${comparison.target.memory}`);
       if (comparison.target.images && comparison.target.images.length > 0) {
         comparison.target.images.forEach((img) => {
-          const imageTag = img.image.includes(":")
-            ? img.image.split(":").pop()
-            : "latest";
-          console.log(`  🐳 ${chalk.cyan(img.name)}: ${chalk.dim(imageTag)}`);
+          console.log(
+            `  🐳 ${chalk.cyan(img.name)}: ${chalk.dim(parseImageTag(img.image))}`,
+          );
         });
       }
 
@@ -2198,6 +2834,18 @@ program
               console.log(`  🐳 ${chalk.yellow(diff.container)}:`);
               console.log(`     Current: ${chalk.red(diff.current)}`);
               console.log(`     Target:  ${chalk.green(diff.target)}`);
+              break;
+            case "container_added":
+              console.log(
+                `  ➕ ${chalk.yellow(diff.container)}: not in current revision, added by target`,
+              );
+              console.log(`     Target:  ${chalk.green(diff.target)}`);
+              break;
+            case "container_removed":
+              console.log(
+                `  ➖ ${chalk.yellow(diff.container)}: present now, ${chalk.red("removed")} by target`,
+              );
+              console.log(`     Current: ${chalk.red(diff.current)}`);
               break;
             case "cpu":
               console.log(
@@ -2282,8 +2930,8 @@ program
       console.log(chalk.cyan.bold("🗑️  Task Definition Pruning"));
       console.log(
         chalk.dim(
-          "Clean up old task definition revisions while keeping latest 5 and protecting in-use revisions.\n"
-        )
+          `Clean up old task definition revisions while keeping the latest ${KEEP_LATEST_COUNT} and protecting in-use revisions.\n`,
+        ),
       );
 
       const ecs = await initAWS();
@@ -2300,7 +2948,7 @@ program
           type: "confirm",
           name: "checkUsage",
           message: chalk.blue(
-            "Do you want to check which revisions are in use by services in a specific cluster?"
+            "Do you want to check which revisions are in use by services or running tasks in a specific cluster?",
           ),
           initial: true,
         },
@@ -2309,7 +2957,7 @@ program
             logger.info(chalk.dim("\nOperation cancelled"));
             process.exit(0);
           },
-        }
+        },
       );
 
       let cluster = null;
@@ -2318,7 +2966,7 @@ program
         if (clusters && clusters.length > 0) {
           const clusterChoices = clusters.map((c) => ({
             title: `${chalk.green(c.clusterName)} ${chalk.yellow(
-              `(${c.servicesCount} services)`
+              `(${c.servicesCount} services)`,
             )}`,
             value: c.clusterName,
           }));
@@ -2335,98 +2983,132 @@ program
                 logger.info(chalk.dim("\nOperation cancelled"));
                 process.exit(0);
               },
-            }
+            },
           );
 
           if (wasPromptCancelled(clusterResponse, "cluster")) {
-            logger.info(chalk.dim("Operation cancelled"));
-            process.exit(0);
+            cancelOperation();
           }
 
           cluster = clusterResponse.cluster;
           if (cluster) {
             console.log(
-              chalk.green(`📍 Checking usage in cluster: ${chalk.bold(cluster)}\n`)
+              chalk.green(
+                `📍 Checking usage in cluster: ${chalk.bold(cluster)}\n`,
+              ),
             );
           }
         }
       } else {
         console.log(
           chalk.yellow(
-            "⚠️  Skipping service usage check. Only latest revision will be protected.\n"
-          )
+            `⚠️  Skipping usage check. Only the latest revision and the latest ${KEEP_LATEST_COUNT} will be kept; revisions still in use by a service or task will NOT be detected.\n`,
+          ),
         );
       }
 
       // Step 3: Analyze revisions
       console.log(chalk.blue.bold("Step 3: Analyzing Revisions\n"));
-      const analysis = await analyzeTaskDefinitionRevisions(ecs, family, cluster, false);
+      const analysis = await analyzeTaskDefinitionRevisions(
+        ecs,
+        family,
+        cluster,
+        false,
+      );
 
       if (analysis.revisions.length === 0) {
         console.log(chalk.yellow("No revisions found for this family"));
         return;
       }
 
-      console.log(chalk.green(`✅ Found ${analysis.revisions.length} revisions\n`));
+      console.log(
+        chalk.green(`✅ Found ${analysis.revisions.length} revisions\n`),
+      );
 
       // Show protection summary
       console.log(chalk.blue.bold("Protection Summary:"));
       console.log(chalk.dim("─".repeat(60)));
-      console.log(`  Total revisions: ${chalk.bold(analysis.revisions.length)}`);
+      console.log(
+        `  Total revisions: ${chalk.bold(analysis.revisions.length)}`,
+      );
+      if (analysis.skipped > 0) {
+        console.log(
+          chalk.yellow(
+            `  ⚠️  Not analysed: ${chalk.bold(analysis.skipped)} of ${analysis.listed} listed revisions could not be read`,
+          ),
+        );
+      }
       console.log(`  Latest revision: ${chalk.bold(analysis.latest)}`);
       console.log(
-        `  Protected: ${chalk.bold(analysis.protected.length)} (latest${cluster ? " + in-use" : ""})`
+        `  Protected: ${chalk.bold(analysis.protected.length)} (latest${cluster ? " + in-use" : ""})`,
       );
       console.log(
-        `  Latest 5 (recommended keep): ${chalk.cyan(
-          analysis.revisions.slice(0, 5).map((r) => r.revision).join(", ")
-        )}`
+        `  Latest ${KEEP_LATEST_COUNT} (always kept): ${chalk.cyan(
+          analysis.revisions
+            .slice(0, KEEP_LATEST_COUNT)
+            .map((r) => r.revision)
+            .join(", "),
+        )}`,
       );
 
       if (analysis.protected.length > 0) {
-        console.log(chalk.green("\n  Protected revisions (cannot be deleted):"));
+        console.log(
+          chalk.green("\n  Protected revisions (cannot be deleted):"),
+        );
         analysis.protected.forEach((r) => {
           const reason = r.isLatest
             ? "latest revision"
             : r.isInUse
-              ? "in use by services"
+              ? "in use by a service or task"
               : "protected";
           console.log(`    • Revision ${r.revision} - ${reason}`);
         });
       }
 
       const eligibleCount = analysis.revisions.filter(
-        (r) => !r.isProtected
+        (r) => !r.isProtected && !r.isInLatest5,
       ).length;
       console.log(
         chalk.yellow(
-          `\n  Eligible for deletion: ${chalk.bold(eligibleCount)} revisions`
-        )
+          `\n  Eligible for deletion: ${chalk.bold(eligibleCount)} revisions`,
+        ),
       );
       console.log(chalk.dim("─".repeat(60) + "\n"));
 
       if (eligibleCount === 0) {
-        console.log(chalk.yellow("\n⚠️  No revisions available for deletion.\n"));
+        console.log(
+          chalk.yellow("\n⚠️  No revisions available for deletion.\n"),
+        );
         console.log(chalk.dim("Reasons:"));
-        if (analysis.revisions.length === 1) {
+        if (analysis.revisions.length <= KEEP_LATEST_COUNT) {
           console.log(
-            chalk.dim(`  • Only 1 revision exists (the latest revision is always protected)`)
+            chalk.dim(
+              `  • Only ${analysis.revisions.length} revision(s) exist, and the latest ${KEEP_LATEST_COUNT} are always kept`,
+            ),
           );
         } else {
-          console.log(chalk.dim(`  • All ${analysis.revisions.length} revisions are protected:`));
-          console.log(chalk.dim(`    - Latest revision: ${analysis.latest} (always protected)`));
+          console.log(
+            chalk.dim(
+              `  • All ${analysis.revisions.length} revisions are protected or within the latest ${KEEP_LATEST_COUNT}:`,
+            ),
+          );
+          console.log(
+            chalk.dim(
+              `    - Latest revision: ${analysis.latest} (always protected)`,
+            ),
+          );
           if (analysis.protected.length > 1) {
             console.log(
               chalk.dim(
-                `    - ${analysis.protected.length - 1} revision(s) in use by services`
-              )
+                `    - ${analysis.protected.length - 1} revision(s) in use by a service or task`,
+              ),
             );
           }
         }
         console.log(
           chalk.dim(
-            `\n💡 Tip: To delete revisions, they must be deregistered (INACTIVE) and not in use by services.`
-          )
+            `\n💡 Tip: To delete revisions, they must not be the latest, not be within the latest ${KEEP_LATEST_COUNT}, and not be in use by a service or running task.`,
+          ),
         );
         return;
       }
@@ -2435,14 +3117,18 @@ program
       console.log(chalk.blue.bold("Step 4: Select Revisions to Delete\n"));
       console.log(
         chalk.dim(
-          "Use spacebar to select/deselect, Enter to confirm. Protected revisions are disabled.\n"
-        )
+          `Protected revisions and the latest ${KEEP_LATEST_COUNT} are excluded from every option below.\n`,
+        ),
       );
 
-      const selectedRevisions = await selectRevisionsToDelete(analysis.revisions);
+      const selectedRevisions = await selectRevisionsToDelete(
+        analysis.revisions,
+      );
 
       if (selectedRevisions.length === 0) {
-        console.log(chalk.yellow("No revisions selected for deletion. Exiting."));
+        console.log(
+          chalk.yellow("No revisions selected for deletion. Exiting."),
+        );
         return;
       }
 
@@ -2454,22 +3140,26 @@ program
       console.log(chalk.dim("─".repeat(60)));
       console.log(`📊 Statistics:`);
       console.log(`   Total revisions: ${chalk.bold(plan.total)}`);
-      console.log(`   Protected: ${chalk.green(plan.protected)} (will NOT be deleted)`);
+      console.log(
+        `   Protected: ${chalk.green(plan.protected)} (will NOT be deleted)`,
+      );
       console.log(`   Will keep: ${chalk.cyan(plan.kept)}`);
       console.log(
-        `   Will deregister: ${chalk.yellow(plan.willDeregister)} (ACTIVE → INACTIVE)`
+        `   Will deregister: ${chalk.yellow(plan.willDeregister)} (ACTIVE → INACTIVE)`,
       );
       console.log(
-        `   Will delete: ${chalk.red(plan.willDelete)} (INACTIVE → DELETED)`
+        `   Will delete: ${chalk.red(plan.willDelete)} (INACTIVE → DELETED)`,
       );
 
       if (plan.protectedRevisions.length > 0) {
-        console.log(chalk.green("\n⚠️  Protected Revisions (will NOT be deleted):"));
+        console.log(
+          chalk.green("\n⚠️  Protected Revisions (will NOT be deleted):"),
+        );
         plan.protectedRevisions.forEach((r) => {
           const reason = r.isLatest
             ? "Latest revision"
             : r.isInUse
-              ? "In use by services"
+              ? "In use by a service or task"
               : "Protected";
           console.log(`   • Revision ${r.revision} - ${reason}`);
         });
@@ -2479,7 +3169,7 @@ program
         console.log(chalk.yellow("\n🔄 Will Deregister (ACTIVE → INACTIVE):"));
         plan.deregisterRevisions.forEach((r) => {
           console.log(
-            `   • Revision ${r.revision} (${new Date(r.createdAt).toLocaleDateString()})`
+            `   • Revision ${r.revision} (${new Date(r.createdAt).toLocaleDateString()})`,
           );
         });
       }
@@ -2488,7 +3178,7 @@ program
         console.log(chalk.red("\n🗑️  Will Delete (INACTIVE → DELETED):"));
         plan.deleteRevisions.forEach((r) => {
           console.log(
-            `   • Revision ${r.revision} (${new Date(r.createdAt).toLocaleDateString()})`
+            `   • Revision ${r.revision} (${new Date(r.createdAt).toLocaleDateString()})`,
           );
         });
       }
@@ -2503,22 +3193,23 @@ program
           type: "text",
           name: "familyName",
           message: chalk.yellow(
-            `⚠️  Type the task definition family name to confirm: ${chalk.bold(family)}`
+            `⚠️  Type the task definition family name to confirm: ${chalk.bold(family)}`,
           ),
           validate: (value) =>
-            value === family
-              ? true
-              : `Please type exactly: ${family}`,
+            value === family ? true : `Please type exactly: ${family}`,
         },
         {
           onCancel: () => {
             logger.info(chalk.dim("\nOperation cancelled"));
             process.exit(0);
           },
-        }
+        },
       );
 
-      if (wasPromptCancelled(typeConfirmResponse, "familyName") || typeConfirmResponse.familyName !== family) {
+      if (
+        wasPromptCancelled(typeConfirmResponse, "familyName") ||
+        typeConfirmResponse.familyName !== family
+      ) {
         console.log(chalk.dim("Confirmation failed. Operation cancelled."));
         return;
       }
@@ -2529,7 +3220,7 @@ program
           type: "confirm",
           name: "confirm",
           message: chalk.red(
-            `⚠️  FINAL CONFIRMATION: Delete ${selectedRevisions.length} revision(s) from ${family}?`
+            `⚠️  FINAL CONFIRMATION: Delete ${selectedRevisions.length} revision(s) from ${family}?`,
           ),
           initial: false,
         },
@@ -2538,10 +3229,13 @@ program
             logger.info(chalk.dim("\nOperation cancelled"));
             process.exit(0);
           },
-        }
+        },
       );
 
-      if (wasPromptCancelled(finalConfirmResponse, "confirm") || !finalConfirmResponse.confirm) {
+      if (
+        wasPromptCancelled(finalConfirmResponse, "confirm") ||
+        !finalConfirmResponse.confirm
+      ) {
         console.log(chalk.dim("Operation cancelled by user"));
         return;
       }
@@ -2558,16 +3252,16 @@ program
       if (results.deregister.success.length > 0) {
         console.log(
           chalk.green(
-            `   ✅ Deregistered: ${results.deregister.success.length} revisions`
-          )
+            `   ✅ Deregistered: ${results.deregister.success.length} revisions`,
+          ),
         );
       }
 
       if (results.deregister.failed.length > 0) {
         console.log(
           chalk.red(
-            `   ❌ Failed to deregister: ${results.deregister.failed.length} revisions`
-          )
+            `   ❌ Failed to deregister: ${results.deregister.failed.length} revisions`,
+          ),
         );
         results.deregister.failed.forEach((f) => {
           console.log(chalk.dim(`      • ${f.arn}: ${f.error}`));
@@ -2576,13 +3270,17 @@ program
 
       if (results.delete.success.length > 0) {
         console.log(
-          chalk.green(`   ✅ Deleted: ${results.delete.success.length} revisions`)
+          chalk.green(
+            `   ✅ Deleted: ${results.delete.success.length} revisions`,
+          ),
         );
       }
 
       if (results.delete.failed.length > 0) {
         console.log(
-          chalk.red(`   ❌ Failed to delete: ${results.delete.failed.length} revisions`)
+          chalk.red(
+            `   ❌ Failed to delete: ${results.delete.failed.length} revisions`,
+          ),
         );
         results.delete.failed.forEach((f) => {
           console.log(chalk.dim(`      • ${f.arn}: ${f.error}`));
@@ -2594,31 +3292,32 @@ program
       // Calculate unique revisions processed
       // The delete.success count is the actual number of revisions removed
       const revisionsDeleted = results.delete.success.length;
-      const revisionsFailed = results.deregister.failed.length + results.delete.failed.length;
+      const revisionsFailed =
+        results.deregister.failed.length + results.delete.failed.length;
 
       if (revisionsFailed === 0) {
         console.log(
           chalk.green.bold(
-            `\n🎉 Successfully cleaned up ${revisionsDeleted} task definition revision(s)!`
-          )
+            `\n🎉 Successfully cleaned up ${revisionsDeleted} task definition revision(s)!`,
+          ),
         );
       } else {
         console.log(
           chalk.yellow(
-            `\n⚠️  Completed: ${revisionsDeleted} cleaned up, ${revisionsFailed} failed`
-          )
+            `\n⚠️  Completed: ${revisionsDeleted} cleaned up, ${revisionsFailed} failed`,
+          ),
         );
       }
 
       console.log(
         chalk.blue(
-          "\n💡 Pro tip: You can verify the results in the AWS Console or use:"
-        )
+          "\n💡 Pro tip: You can verify the results in the AWS Console or use:",
+        ),
       );
       console.log(
         chalk.dim(
-          `   aws ecs list-task-definitions --family-prefix ${family} --status ACTIVE`
-        )
+          `   aws ecs list-task-definitions --family-prefix ${family} --status ACTIVE`,
+        ),
       );
     } catch (err) {
       console.error(chalk.red("Pruning failed: " + err.message));
@@ -2626,4 +3325,81 @@ program
     }
   });
 
-program.parse();
+/**
+ * True when this file was executed directly rather than imported.
+ *
+ * npm installs the bin as a symlink (…/bin/taskonaut -> …/index.js) and Node
+ * resolves symlinks when building import.meta.url, so process.argv[1] is the
+ * link path while import.meta.filename is its target. Comparing the two
+ * directly reports false for every global install, which silently skips
+ * program.parse() and makes the CLI a no-op. Resolve argv[1] before comparing.
+ *
+ * @returns {boolean}
+ */
+function isMainModule() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+
+  try {
+    return fs.realpathSync(entry) === import.meta.filename;
+  } catch {
+    // argv[1] is not a resolvable path (e.g. an eval context).
+    return false;
+  }
+}
+
+if (isMainModule()) {
+  printBanner();
+  program.parse();
+}
+
+// Exported for unit tests: `program` so the commands can be driven end to end,
+// plus the helpers whose behaviour the destructive commands depend on.
+export {
+  program,
+  analyzeTaskDefinitionRevisions,
+  buildExecuteCommandArgs,
+  cancelOperation,
+  chunk,
+  collectInUseTaskDefinitions,
+  compareTaskDefinitions,
+  computeDeletionBuckets,
+  deleteTaskDefinitions,
+  deregisterTaskDefinitions,
+  extractProfileNamesFromConfig,
+  executeCommand,
+  extractServiceTaskDefinitions,
+  fetchAllTaskDefinitions,
+  generateDeletionPlan,
+  getActiveProfile,
+  getActiveRegion,
+  getTaskDetails,
+  isThrottlingError,
+  listClusters,
+  listServices,
+  listTaskDefinitionFamilies,
+  listTaskDefinitionRevisions,
+  mapWithConcurrency,
+  mergeRevisionArnsDesc,
+  paginate,
+  parseFamilyFromArn,
+  parseImageTag,
+  parseRevisionFromArn,
+  performPruning,
+  performRollback,
+  selectCluster,
+  selectContainer,
+  selectRevisionsToDelete,
+  selectTask,
+  selectTaskDefinitionFamily,
+  sleep,
+  wasPromptCancelled,
+  DEFAULT_EXEC_COMMAND,
+  DESCRIBE_SERVICES_BATCH_SIZE,
+  DESCRIBE_TASKS_BATCH_SIZE,
+  FAMILY_DETAIL_CONCURRENCY,
+  KEEP_LATEST_COUNT,
+  MANUAL_SELECTION_LIMIT,
+  PAGINATE_MAX_RETRIES,
+  ROLLBACK_REVISION_LIMIT,
+};

@@ -13,6 +13,12 @@ permissions:
   pull-requests: write
   id-token: write
 
+# Never publish two releases concurrently; queue instead of cancelling so a
+# push that lands mid-release still gets released.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     # Skip releases for chore(*) merges (dependabot bumps, release commits).
@@ -25,10 +31,13 @@ jobs:
         with:
           node-version: lts/*
           registry-url: "https://registry.npmjs.org"
-      - run: npm install
+          cache: "npm"
+      # Reproducible install from the lockfile: a release must build the
+      # dependency tree the PR checks validated.
+      - run: npm ci
       - run: npm run lint
-      - run: npm run format
-      - run: npm test
+      - run: npm run format:check
+      - run: npm run test:coverage
       - run: npm audit signatures
       - name: Release
         env:

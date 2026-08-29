@@ -99,13 +99,31 @@ Usage: taskonaut [options] [command]
 ✨ Interactive ECS task executor, rollback tool, and task definition cleanup utility
 
 Options:
-  -h, --help  display help for command
+  -v, --version            Print the installed version
+  -c, --command <command>  Command to run in the container (default: "/bin/sh")
+  -h, --help               display help for command
 
 Commands:
   config      Manage configuration settings
   doctor      Run diagnostics to check your environment setup
   rollback    Rollback an ECS service to a previous task definition revision
   prune       Clean up unused task definition revisions
+```
+
+Use `--command` for containers whose shell is not `/bin/sh`:
+
+```bash
+taskonaut --command /bin/bash
+```
+
+`taskonaut doctor` exits non-zero when a check fails, so it can gate a setup
+script or a CI step.
+
+`config show` prints a human-readable summary. For scripting, `--json` writes
+only JSON to stdout:
+
+```bash
+taskonaut config show --json | jq -r .path
 ```
 
 ## Configuration
@@ -115,6 +133,19 @@ Configuration is stored in:
 - macOS: `~/Users/$USER/Library/Preferences/taskonaut-nodejs`
 - Linux: `~/.config/taskonaut-nodejs`
 - Windows:`%APPDATA%\taskonaut-nodejs`
+
+### Environment variables
+
+Standard AWS environment variables take precedence over the stored
+configuration, matching the AWS CLI and SDKs:
+
+| Variable                      | Effect                                      |
+| ----------------------------- | ------------------------------------------- |
+| `AWS_PROFILE`                 | Overrides the configured profile            |
+| `AWS_REGION`                  | Overrides the configured region             |
+| `AWS_DEFAULT_REGION`          | Fallback when `AWS_REGION` is unset         |
+| `AWS_CONFIG_FILE`             | Location of the AWS config file             |
+| `AWS_SHARED_CREDENTIALS_FILE` | Location of the AWS shared credentials file |
 
 ## 🔄 ECS Service Rollback
 
@@ -209,14 +240,14 @@ The pruning feature helps you clean up unused task definition revisions to reduc
 ### How Pruning Works
 
 1. **Select Task Definition Family** - Choose which task definition family to clean up
-2. **Optional Service Usage Check** - Optionally select a cluster to identify revisions currently in use
+2. **Optional Usage Check** - Optionally select a cluster to identify revisions currently in use. This covers each service's primary revision, revisions still draining under an in-flight deployment, CodeDeploy/`EXTERNAL` task sets, and standalone tasks started by `run-task` or a scheduled task
 3. **Analyze Revisions** - View all revisions with protection status:
    - ✅ **LATEST** - Latest revision (always protected)
-   - 🛡️ **IN-USE** - Currently used by services (protected if cluster checked)
-   - 📌 **KEEP** - Within latest 5 revisions (recommended to keep, but can uncheck)
+   - 🛡️ **IN-USE** - Currently used by a service or running task (protected if cluster checked)
+   - 📌 **KEEP** - Within the latest 5 revisions (always kept, never offered for deletion)
    - ⚠️ **INACTIVE** - Not in use, eligible for deletion
    - 🔄 **ACTIVE** - Will be deregistered first, then deleted
-4. **Manual Selection** - Interactive checkbox interface to select revisions to delete
+4. **Selection** - Bulk options (inactive, age-based, beyond latest 10) or a manual checkbox list. Protected revisions and the latest 5 are excluded from every option.
 5. **Dry-Run Preview** - Detailed summary of what will happen:
    - Protected revisions (will NOT be deleted)
    - Revisions to keep
@@ -266,7 +297,7 @@ taskonaut prune
 
 - **Latest Revision**: Always protected, cannot be selected
 - **In-Use Revisions**: Protected if service usage check is performed
-- **Latest 5 Policy**: Revisions within the latest 5 are pre-unchecked (but can be manually selected if needed)
+- **Latest 5 Policy**: The newest 5 revisions overall (ACTIVE and INACTIVE combined) are never offered for deletion
 
 #### 🔒 Multiple Confirmation Gates
 
@@ -279,12 +310,12 @@ taskonaut prune
 
 - **Checkbox Interface**: Full control over which revisions to delete
 - **Smart Pre-selection**: Automatically suggests INACTIVE revisions beyond latest 5
-- **Override Capability**: Can uncheck pre-selected items or check items within latest 5
+- **Override Capability**: Can uncheck any pre-selected revision; protected revisions and the latest 5 are never selectable
 - **Disabled Protection**: Protected revisions are visually disabled and cannot be selected
 
 #### 📊 Detailed Reporting
 
-- **Pre-deletion Analysis**: Shows total, protected, kept, and eligible counts
+- **Pre-deletion Analysis**: Shows total, protected, kept, and eligible counts, plus any revisions that could not be read
 - **Phase-by-Phase Progress**: Real-time progress indicators during execution
 - **Error Handling**: Continues processing on individual failures, reports all errors at end
 - **Verification Commands**: Provides AWS CLI commands to verify results
@@ -292,8 +323,8 @@ taskonaut prune
 ### Best Practices
 
 1. **Regular Cleanup**: Run `taskonaut prune` periodically (monthly/quarterly) to prevent accumulation
-2. **Check Service Usage**: Always check service usage to avoid deleting revisions in use
-3. **Keep Latest 5**: The default "keep latest 5" policy provides a good balance of history and cleanliness
+2. **Check Service Usage**: Always check service usage to avoid deleting revisions in use. The check is scoped to the cluster you select, so revisions used by services in _other_ clusters are not protected.
+3. **Keep Latest 5**: The "keep latest 5" policy is enforced by every selection option, not just the recommended one
 4. **Start Conservative**: On first use, only delete very old INACTIVE revisions
 5. **Verify Results**: Use the provided AWS CLI command to verify cleanup was successful
 6. **Document Deletions**: Note which revisions were deleted for audit purposes
@@ -310,12 +341,14 @@ taskonaut prune
 ### Important Notes
 
 > [!WARNING]
+>
 > - **Deletion is permanent**: Deleted task definitions cannot be recovered
 > - **Deregister is reversible**: INACTIVE revisions can still be updated or deleted later
 > - **Service impact**: Deleting an in-use revision won't affect running services, but always check usage first
 > - **Batch operations**: Delete operations process up to 10 revisions at a time for efficiency
 
 > [!TIP]
+>
 > - **First time users**: Start by only deleting revisions that are more than 6 months old
 > - **Keep history**: Consider keeping at least 10 revisions for rollback flexibility
 > - **Infrastructure as Code**: If using IaC tools, ensure `skipDestroy: true` is set to preserve revision history
@@ -325,12 +358,14 @@ taskonaut prune
 Taskonaut is optimized for handling large revision sets with built-in rate limiting:
 
 **Automatic Rate Limiting:**
+
 - **Analysis phase**: 20 revisions per batch with 500ms delay between batches
 - **Pagination**: 100 revisions per page with 100ms delay between pages
 - **Deregister operations**: 200ms delay between each call, 3 retry attempts with exponential backoff (1s, 2s, 4s)
 - **Delete operations**: Batch of 10 with 300ms delay, 3 retry attempts with exponential backoff (1s, 2s, 4s)
 
 **For 500+ Revisions:**
+
 - ✅ Full pagination support - fetches ALL revisions
 - ✅ Progress indicators show real-time status
 - ✅ Automatic throttling prevents API rate limit errors
@@ -338,12 +373,14 @@ Taskonaut is optimized for handling large revision sets with built-in rate limit
 - ✅ Bulk selection options avoid overwhelming UI
 
 **Best Practices for Large Sets:**
+
 1. Use bulk selection options (e.g., "All INACTIVE beyond latest 5")
 2. Consider age-based cleanup (e.g., "older than 90 days")
 3. Use revision range for targeted cleanup (e.g., revisions 1-400)
 4. Avoid manual checkbox selection with 500+ items
 
 **If Rate Limiting Occurs:**
+
 - Tool automatically retries with exponential backoff
 - Progress messages show retry attempts
 - If persistent, wait a few minutes and try again
@@ -434,6 +471,21 @@ MIT
 ## Contributing
 
 Pull requests welcome! Please read `CONTRIBUTING.md` for details.
+
+### Running the tests
+
+```bash
+npm test              # run the suite
+npm run test:watch    # re-run on change
+npm run test:coverage # run with coverage, enforcing the threshold CI uses
+npm run lint          # eslint
+npm run format:check  # prettier, read-only
+```
+
+The suite talks to test doubles only, so it needs no AWS credentials. It covers
+the AWS pagination and batching rules, the pruning safety guarantees (what is
+protected, what is even offered for deletion, and the confirmation gates), the
+rollback flow, the interactive pickers, and the CLI surface end to end.
 
 ## Dependabot
 
