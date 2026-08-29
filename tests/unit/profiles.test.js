@@ -29,7 +29,17 @@ function writeProfiles(home, profileNames) {
   );
 }
 
-/** Creates an isolated HOME containing an ~/.aws/config with the given profiles. */
+/**
+ * Creates an isolated home containing an ~/.aws/config with the given profiles.
+ *
+ * These tests turn on what the profile cache holds, so the cache has to be
+ * theirs: on Linux it lives under XDG_CONFIG_HOME when that is set, and
+ * redirecting HOME alone would leave them sharing the cache of whoever runs
+ * them -- and rewriting it.
+ *
+ * @param {string[]} profileNames - Profiles to write to ~/.aws/config.
+ * @returns {string} The isolated home directory.
+ */
 function makeHome(profileNames) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "taskonaut-profiles-"));
   tempDirs.push(home);
@@ -43,7 +53,12 @@ function runDoctor(home, profile) {
   try {
     const out = execFileSync(process.execPath, [indexPath, "doctor"], {
       encoding: "utf-8",
-      env: { ...process.env, HOME: home, AWS_PROFILE: profile },
+      env: {
+        ...process.env,
+        HOME: home,
+        XDG_CONFIG_HOME: path.join(home, ".config"),
+        AWS_PROFILE: profile,
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     return out.replace(ANSI_PATTERN, "");
