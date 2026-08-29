@@ -345,21 +345,82 @@ const initAWS = async () => {
  * @param {string} key - Response property holding the page of results.
  * @returns {Promise<Array>} All results across every page.
  */
-async function paginate(operation, params, key) {
+async function paginate(operation, params, key, options = {}) {
+  const {
+    spinner = null,
+    maxRetries = PAGINATE_MAX_RETRIES,
+    label = null,
+  } = options;
+
   const results = [];
   let nextToken;
+  let retryCount = 0;
+  let exhausted = false;
 
-  do {
-    const response = await operation({
-      ...params,
-      maxResults: 100, // AWS maximum for all ECS list operations.
-      nextToken,
-    });
-    if (response[key]) results.push(...response[key]);
-    nextToken = response.nextToken;
-  } while (nextToken);
+  // Loop on an explicit flag rather than on nextToken. nextToken is undefined
+  // before the first request, so a `while (nextToken)` loop would exit instead
+  // of retrying when the very first page is throttled -- silently returning an
+  // empty list rather than the caller's data.
+  while (!exhausted) {
+    try {
+      const response = await operation({
+        ...params,
+        maxResults: 100, // AWS maximum for all ECS list operations.
+        nextToken,
+      });
+
+      if (response[key]) results.push(...response[key]);
+      nextToken = response.nextToken;
+      retryCount = 0;
+
+      if (!nextToken) {
+        exhausted = true;
+        break;
+      }
+
+      if (spinner && label) {
+        spinner.text = `${label} (${results.length} so far)`;
+      }
+      await sleep(PAGE_DELAY_MS);
+    } catch (err) {
+      if (!isThrottlingError(err)) throw err;
+
+      retryCount += 1;
+      if (retryCount > maxRetries) {
+        throw new Error(
+          `Rate limit exceeded after ${maxRetries} retries. Please try again later.`,
+          { cause: err },
+        );
+      }
+
+      const backoffMs = Math.min(
+        1000 * Math.pow(2, retryCount - 1),
+        PAGINATE_MAX_BACKOFF_MS,
+      );
+      if (spinner) {
+        spinner.text = chalk.yellow(
+          `⚠️  Rate limit, pausing ${backoffMs / 1000}s... (${retryCount}/${maxRetries})`,
+        );
+      }
+      await sleep(backoffMs);
+      // nextToken is deliberately unchanged: the same page is re-requested.
+    }
+  }
 
   return results;
+}
+
+/**
+ * True when an error is an ECS throttling / rate-limit error.
+ * @param {Error} err - Error to classify.
+ * @returns {boolean}
+ */
+function isThrottlingError(err) {
+  return (
+    err?.name === "ThrottlingException" ||
+    err?.name === "TooManyRequestsException" ||
+    Boolean(err?.message?.includes("Rate exceeded"))
+  );
 }
 
 /**
@@ -492,6 +553,10 @@ const DESCRIBE_SERVICES_BATCH_SIZE = 10;
 const DESCRIBE_TASKS_BATCH_SIZE = 100;
 // Families detailed in parallel when building the prune picker.
 const FAMILY_DETAIL_CONCURRENCY = 5;
+// Pagination pacing and retry budget, shared by every ECS list operation.
+const PAGE_DELAY_MS = 100;
+const PAGINATE_MAX_RETRIES = 5;
+const PAGINATE_MAX_BACKOFF_MS = 16000;
 // Newest revisions offered as rollback targets.
 const ROLLBACK_REVISION_LIMIT = 100;
 // Number of newest revisions the prune command promises to keep.
@@ -884,6 +949,42 @@ async function selectContainer(ecs, cluster, taskArn, allowBack = false) {
 }
 
 /**
+ * Builds the argv for `aws ecs execute-command`.
+ *
+ * Returned as an array and spawned without a shell, so cluster, task and
+ * container names can never be interpreted as shell syntax.
+ *
+ * @param {object} params - Session parameters.
+ * @returns {string[]} Arguments for the AWS CLI.
+ */
+function buildExecuteCommandArgs({
+  profile,
+  region,
+  cluster,
+  taskArn,
+  containerName,
+  command,
+}) {
+  return [
+    "ecs",
+    "execute-command",
+    "--profile",
+    profile,
+    "--region",
+    region,
+    "--cluster",
+    cluster,
+    "--task",
+    taskArn,
+    "--container",
+    containerName,
+    "--command",
+    command,
+    "--interactive",
+  ];
+}
+
+/**
  * Executes a command on the selected container.
  * @param {string} cluster - Cluster name.
  * @param {string} taskArn - Task ARN.
@@ -899,27 +1000,16 @@ async function executeCommand(
   return new Promise((resolve, reject) => {
     logger.info(chalk.dim(`Starting session (${command})...`));
 
-    // Arguments are passed as an argv array with no shell, so cluster, task and
-    // container names cannot be interpreted as shell syntax.
     const childProcess = spawn(
       "aws",
-      [
-        "ecs",
-        "execute-command",
-        "--profile",
-        getActiveProfile(),
-        "--region",
-        getActiveRegion(),
-        "--cluster",
+      buildExecuteCommandArgs({
+        profile: getActiveProfile(),
+        region: getActiveRegion(),
         cluster,
-        "--task",
         taskArn,
-        "--container",
         containerName,
-        "--command",
         command,
-        "--interactive",
-      ],
+      }),
       {
         stdio: "inherit",
       },
@@ -1332,74 +1422,23 @@ function wasPromptCancelled(response, key) {
 }
 
 /**
- * Fetches all task definitions with pagination support and rate limiting.
+ * Fetches all task definition ARNs matching `params`.
+ *
+ * ListTaskDefinitions returns only ACTIVE revisions when `status` is omitted,
+ * so callers that need INACTIVE revisions must ask for them explicitly.
+ *
  * @param {ECS} ecs - AWS ECS client.
  * @param {Object} params - listTaskDefinitions parameters.
  * @param {Object} spinner - Optional ora spinner for progress updates.
  * @returns {Promise<Array<string>>} All task definition ARNs.
  */
 async function fetchAllTaskDefinitions(ecs, params = {}, spinner = null) {
-  const allArns = [];
-  let nextToken = null;
-  let retryCount = 0;
-  const maxRetries = 5;
-
-  do {
-    try {
-      const response = await ecs.listTaskDefinitions({
-        ...params,
-        nextToken: nextToken || undefined,
-        maxResults: 100, // AWS maximum
-      });
-
-      if (response.taskDefinitionArns) {
-        allArns.push(...response.taskDefinitionArns);
-      }
-
-      nextToken = response.nextToken;
-      retryCount = 0; // Reset retry count on success
-
-      // Add small delay between pagination calls to avoid rate limits
-      if (nextToken) {
-        await sleep(100);
-      }
-    } catch (err) {
-      if (
-        err.name === "ThrottlingException" ||
-        err.message.includes("Rate exceeded")
-      ) {
-        retryCount++;
-        if (retryCount > maxRetries) {
-          throw new Error(
-            `Rate limit exceeded after ${maxRetries} retries. Please try again later.`,
-            { cause: err },
-          );
-        }
-
-        // Exponential backoff: 1s, 2s, 4s, 8s, 16s
-        const backoffMs = Math.min(1000 * Math.pow(2, retryCount - 1), 16000);
-
-        // Update spinner instead of logging to avoid cluttering output
-        if (spinner) {
-          spinner.text = chalk.yellow(
-            `⚠️  Rate limit, pausing ${backoffMs / 1000}s... (${retryCount}/${maxRetries})`,
-          );
-        }
-
-        await sleep(backoffMs);
-
-        // Restore spinner text after retry
-        if (spinner) {
-          spinner.text = `Fetching task definitions... (${allArns.length} found)`;
-        }
-        // Don't advance nextToken, retry the same page
-      } else {
-        throw err;
-      }
-    }
-  } while (nextToken);
-
-  return allArns;
+  return paginate(
+    (p) => ecs.listTaskDefinitions(p),
+    params,
+    "taskDefinitionArns",
+    { spinner, label: "Fetching task definitions..." },
+  );
 }
 
 /**
@@ -1433,6 +1472,7 @@ async function listTaskDefinitionFamilies(ecs, quiet = false) {
     }
 
     let completed = 0;
+    const skippedFamilies = [];
     const families = await mapWithConcurrency(
       familyNames,
       FAMILY_DETAIL_CONCURRENCY,
@@ -1461,14 +1501,18 @@ async function listTaskDefinitionFamilies(ecs, quiet = false) {
           return {
             family,
             revisionCount: revisions.length,
-            latestRevision: Math.max(...revisions),
+            // Both listings are DESC, so the newest is the first of each.
+            latestRevision: Math.max(
+              parseRevisionFromArn(activeArns[0] ?? inactiveArns[0]),
+              parseRevisionFromArn(inactiveArns[0] ?? activeArns[0]),
+            ),
             activeCount: activeArns.length,
             inactiveCount: inactiveArns.length,
           };
         } catch (err) {
-          logger.warn(
-            chalk.yellow(`Skipping family ${family}: ${err.message}`),
-          );
+          // Recorded rather than logged: writing to stdout here would corrupt
+          // the live spinner. Surfaced in the summary below.
+          skippedFamilies.push({ family, error: err.message });
           return null;
         } finally {
           completed += 1;
@@ -1479,7 +1523,22 @@ async function listTaskDefinitionFamilies(ecs, quiet = false) {
       },
     );
 
-    if (spinner) spinner.succeed("Task definition families fetched");
+    if (spinner) {
+      spinner.succeed(
+        skippedFamilies.length > 0
+          ? `Task definition families fetched (${skippedFamilies.length} could not be read)`
+          : "Task definition families fetched",
+      );
+    }
+
+    if (skippedFamilies.length > 0) {
+      logger.warn(
+        chalk.yellow(
+          `⚠️  ${skippedFamilies.length} families could not be read and are not listed below (e.g. ${skippedFamilies[0].family}: ${skippedFamilies[0].error}).`,
+        ),
+      );
+    }
+
     return families
       .filter(Boolean)
       .sort((a, b) => b.revisionCount - a.revisionCount);
@@ -1496,7 +1555,7 @@ async function listTaskDefinitionFamilies(ecs, quiet = false) {
  * @param {string} family - Task definition family name.
  * @param {string} cluster - Cluster name (optional, for checking service usage).
  * @param {boolean} quiet - Whether to suppress spinner output.
- * @returns {Promise<{revisions: Array, protected: Array, inUse: Set, latest: number}>} Analysis results.
+ * @returns {Promise<{revisions: Array, protected: Array, inUse: Set, latest: number, skipped: number, listed: number}>} Analysis results.
  */
 async function analyzeTaskDefinitionRevisions(
   ecs,
@@ -1532,7 +1591,14 @@ async function analyzeTaskDefinitionRevisions(
 
     if (taskDefinitionArns.length === 0) {
       if (spinner) spinner.warn("No revisions found");
-      return { revisions: [], protected: [], inUse: new Set(), latest: 0 };
+      return {
+        revisions: [],
+        protected: [],
+        inUse: new Set(),
+        latest: 0,
+        skipped: 0,
+        listed: 0,
+      };
     }
 
     if (spinner)
@@ -1660,19 +1726,39 @@ async function analyzeTaskDefinitionRevisions(
       }
     }
 
-    const latest = revisions.length > 0 ? revisions[0].revision : 0;
+    // Derived from the listing, not from revisions[0]: a failed describe on the
+    // newest revision would otherwise silently report the second-newest as the
+    // latest and drop the "latest is always protected" guarantee.
+    const latest = parseRevisionFromArn(taskDefinitionArns[0]);
+
+    // Describe failures are skipped rather than fatal, but a destructive
+    // command must not silently analyse fewer revisions than it listed.
+    const skipped = taskDefinitionArns.length - revisions.length;
     const protectedRevisions = revisions.filter((r) => r.isProtected);
 
-    if (spinner)
+    if (spinner) {
       spinner.succeed(
-        `Analysis complete: ${revisions.length} revisions loaded`,
+        skipped > 0
+          ? `Analysis complete: ${revisions.length} revisions loaded, ${skipped} could not be read`
+          : `Analysis complete: ${revisions.length} revisions loaded`,
       );
+    }
+
+    if (skipped > 0) {
+      logger.warn(
+        chalk.yellow(
+          `⚠️  ${skipped} of ${taskDefinitionArns.length} revisions could not be read and were excluded from this analysis. They will not be deleted, but the counts below are incomplete.`,
+        ),
+      );
+    }
 
     return {
       revisions,
       protected: protectedRevisions,
       inUse: inUseRevisions,
       latest,
+      skipped,
+      listed: taskDefinitionArns.length,
     };
   } catch (err) {
     if (spinner?.isSpinning)
@@ -2916,7 +3002,7 @@ program
       } else {
         console.log(
           chalk.yellow(
-            "⚠️  Skipping service usage check. Only latest revision will be protected.\n",
+            `⚠️  Skipping usage check. Only the latest revision and the latest ${KEEP_LATEST_COUNT} will be kept; revisions still in use by a service or task will NOT be detected.\n`,
           ),
         );
       }
@@ -2945,6 +3031,13 @@ program
       console.log(
         `  Total revisions: ${chalk.bold(analysis.revisions.length)}`,
       );
+      if (analysis.skipped > 0) {
+        console.log(
+          chalk.yellow(
+            `  ⚠️  Not analysed: ${chalk.bold(analysis.skipped)} of ${analysis.listed} listed revisions could not be read`,
+          ),
+        );
+      }
       console.log(`  Latest revision: ${chalk.bold(analysis.latest)}`);
       console.log(
         `  Protected: ${chalk.bold(analysis.protected.length)} (latest${cluster ? " + in-use" : ""})`,
@@ -3260,26 +3353,53 @@ if (isMainModule()) {
   program.parse();
 }
 
-// Exported for unit tests. The CLI surface is the `program` above; these are the
-// pure helpers whose behaviour the destructive commands depend on.
+// Exported for unit tests: `program` so the commands can be driven end to end,
+// plus the helpers whose behaviour the destructive commands depend on.
 export {
+  program,
   analyzeTaskDefinitionRevisions,
+  buildExecuteCommandArgs,
   cancelOperation,
   chunk,
   collectInUseTaskDefinitions,
-  extractServiceTaskDefinitions,
-  mergeRevisionArnsDesc,
+  compareTaskDefinitions,
   computeDeletionBuckets,
+  deleteTaskDefinitions,
+  deregisterTaskDefinitions,
   extractProfileNamesFromConfig,
+  executeCommand,
+  extractServiceTaskDefinitions,
+  fetchAllTaskDefinitions,
+  generateDeletionPlan,
   getActiveProfile,
   getActiveRegion,
-  generateDeletionPlan,
+  getTaskDetails,
+  isThrottlingError,
+  listClusters,
+  listServices,
+  listTaskDefinitionFamilies,
+  listTaskDefinitionRevisions,
   mapWithConcurrency,
+  mergeRevisionArnsDesc,
   paginate,
   parseFamilyFromArn,
   parseImageTag,
   parseRevisionFromArn,
+  performPruning,
+  performRollback,
+  selectCluster,
+  selectContainer,
+  selectRevisionsToDelete,
+  selectTask,
+  selectTaskDefinitionFamily,
+  sleep,
+  wasPromptCancelled,
+  DEFAULT_EXEC_COMMAND,
   DESCRIBE_SERVICES_BATCH_SIZE,
   DESCRIBE_TASKS_BATCH_SIZE,
+  FAMILY_DETAIL_CONCURRENCY,
   KEEP_LATEST_COUNT,
+  MANUAL_SELECTION_LIMIT,
+  PAGINATE_MAX_RETRIES,
+  ROLLBACK_REVISION_LIMIT,
 };

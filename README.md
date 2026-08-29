@@ -297,7 +297,7 @@ taskonaut prune
 
 - **Latest Revision**: Always protected, cannot be selected
 - **In-Use Revisions**: Protected if service usage check is performed
-- **Latest 5 Policy**: Revisions within the latest 5 are pre-unchecked (but can be manually selected if needed)
+- **Latest 5 Policy**: The newest 5 revisions overall (ACTIVE and INACTIVE combined) are never offered for deletion
 
 #### 🔒 Multiple Confirmation Gates
 
@@ -310,12 +310,12 @@ taskonaut prune
 
 - **Checkbox Interface**: Full control over which revisions to delete
 - **Smart Pre-selection**: Automatically suggests INACTIVE revisions beyond latest 5
-- **Override Capability**: Can uncheck pre-selected items or check items within latest 5
+- **Override Capability**: Can uncheck any pre-selected revision; protected revisions and the latest 5 are never selectable
 - **Disabled Protection**: Protected revisions are visually disabled and cannot be selected
 
 #### 📊 Detailed Reporting
 
-- **Pre-deletion Analysis**: Shows total, protected, kept, and eligible counts
+- **Pre-deletion Analysis**: Shows total, protected, kept, and eligible counts, plus any revisions that could not be read
 - **Phase-by-Phase Progress**: Real-time progress indicators during execution
 - **Error Handling**: Continues processing on individual failures, reports all errors at end
 - **Verification Commands**: Provides AWS CLI commands to verify results
@@ -471,6 +471,21 @@ MIT
 ## Contributing
 
 Pull requests welcome! Please read `CONTRIBUTING.md` for details.
+
+### Running the tests
+
+```bash
+npm test              # run the suite
+npm run test:watch    # re-run on change
+npm run test:coverage # run with coverage, enforcing the threshold CI uses
+npm run lint          # eslint
+npm run format:check  # prettier, read-only
+```
+
+The suite talks to test doubles only, so it needs no AWS credentials. It covers
+the AWS pagination and batching rules, the pruning safety guarantees (what is
+protected, what is even offered for deletion, and the confirmation gates), the
+rollback flow, the interactive pickers, and the CLI surface end to end.
 
 ## Dependabot
 

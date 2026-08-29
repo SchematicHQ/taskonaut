@@ -154,6 +154,109 @@ describe("analyzeTaskDefinitionRevisions", () => {
     expect(revisions.find((r) => r.revision === 5).isProtected).toBe(true);
   });
 
+  test("reports the latest revision from the listing, not from what it could read", async () => {
+    // Regression: `latest` came from revisions[0], so a failed describe on the
+    // newest revision silently promoted the second-newest -- and the "latest is
+    // always protected" guarantee then applied to the wrong revision.
+    const ecs = fakeEcs({ active: [arn(12), arn(11), arn(10)] });
+    ecs.describeTaskDefinition = async ({ taskDefinition }) => {
+      const revision = Number(taskDefinition.split(":").pop());
+      if (revision === 12) throw new Error("ClientException");
+      return {
+        taskDefinition: {
+          family: "app",
+          revision,
+          status: "ACTIVE",
+          registeredAt: new Date("2026-01-01T00:00:00Z"),
+          containerDefinitions: [],
+        },
+      };
+    };
+
+    const analysis = await analyzeTaskDefinitionRevisions(
+      ecs,
+      "app",
+      null,
+      true,
+    );
+
+    expect(analysis.latest).toBe(12);
+    expect(analysis.revisions.map((r) => r.revision)).toEqual([11, 10]);
+  });
+
+  test("counts revisions it could not read", async () => {
+    // A destructive command must not quietly analyse fewer revisions than it
+    // listed; the counts it prints would understate what is out there.
+    const ecs = fakeEcs({ active: [arn(3), arn(2), arn(1)] });
+    ecs.describeTaskDefinition = async ({ taskDefinition }) => {
+      if (taskDefinition === arn(2)) throw new Error("ClientException");
+      return {
+        taskDefinition: {
+          family: "app",
+          revision: Number(taskDefinition.split(":").pop()),
+          status: "ACTIVE",
+          registeredAt: new Date("2026-01-01T00:00:00Z"),
+          containerDefinitions: [],
+        },
+      };
+    };
+
+    const analysis = await analyzeTaskDefinitionRevisions(
+      ecs,
+      "app",
+      null,
+      true,
+    );
+
+    expect(analysis.listed).toBe(3);
+    expect(analysis.skipped).toBe(1);
+    expect(analysis.revisions).toHaveLength(2);
+  });
+
+  test("reports nothing skipped when every revision reads cleanly", async () => {
+    const ecs = fakeEcs({ active: [arn(2)], inactive: [arn(1)] });
+
+    const analysis = await analyzeTaskDefinitionRevisions(
+      ecs,
+      "app",
+      null,
+      true,
+    );
+
+    expect(analysis).toMatchObject({ skipped: 0, listed: 2, latest: 2 });
+  });
+
+  test("an empty family reports zero counts rather than undefined", async () => {
+    const analysis = await analyzeTaskDefinitionRevisions(
+      fakeEcs({ active: [], inactive: [] }),
+      "app",
+      null,
+      true,
+    );
+
+    expect(analysis).toEqual({
+      revisions: [],
+      protected: [],
+      inUse: new Set(),
+      latest: 0,
+      skipped: 0,
+      listed: 0,
+    });
+  });
+
+  test("skips the usage lookup entirely when no cluster is given", async () => {
+    const ecs = fakeEcs({ active: [arn(2), arn(1)] });
+
+    const { inUse } = await analyzeTaskDefinitionRevisions(
+      ecs,
+      "app",
+      null,
+      true,
+    );
+
+    expect(inUse.size).toBe(0);
+  });
+
   test("fails closed when the in-use lookup errors", async () => {
     const ecs = fakeEcs({ active: [arn(2), arn(1)] });
     ecs.listServices = async () => {
