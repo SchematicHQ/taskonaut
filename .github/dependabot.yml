@@ -4,8 +4,10 @@ updates:
     versioning-strategy: increase
     directories:
       - "/"
+    # Nothing first-party lives here, so a weekly run only caps the noise:
+    # security updates still arrive on their own schedule.
     schedule:
-      interval: "daily"
+      interval: "weekly"
     cooldown:
       default-days: 7
     labels:
@@ -13,10 +15,20 @@ updates:
       - "Dependabot"
     assignees:
       - "mhmdio"
+    groups:
+      # @aws-sdk/* ships a release most days and every package moves together,
+      # so client-ecs and credential-providers used to land as a pair of PRs.
+      aws-sdk:
+        patterns:
+          - "@aws-sdk/*"
+      # Majors stay out so they still arrive on their own.
+      dev-dependencies:
+        dependency-type: "development"
+        update-types: ["minor", "patch"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
     cooldown:
       default-days: 7
     labels:
@@ -24,3 +36,8 @@ updates:
       - "Dependabot"
     assignees:
       - "mhmdio"
+    groups:
+      actions:
+        patterns:
+          - "*"
+        update-types: ["minor", "patch"]
