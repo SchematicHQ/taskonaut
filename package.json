@@ -60,7 +60,7 @@
   "dependencies": {
     "@aws-sdk/client-ecs": "^3.1139.0",
     "@aws-sdk/credential-providers": "^3.1139.0",
-    "chalk": "^6.0.0",
+    "chalk": "^6.0.1",
     "commander": "^15.0.0",
     "conf": "^15.1.0",
     "dotenv": "^18.0.5",
