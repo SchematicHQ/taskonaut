@@ -21,7 +21,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}/runner=1cpu-linux-arm64
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: lts/*
           registry-url: "https://registry.npmjs.org"
