@@ -70,7 +70,7 @@
     "inquirer": "^14.2.2",
     "npm-check-updates": "^23.1.0",
     "ora": "^9.4.1",
-    "pino": "^10.3.1",
+    "pino": "^10.4.0",
     "pino-pretty": "^13.2.0",
     "prompts": "^2.4.2"
   },
