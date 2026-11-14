@@ -90,5 +90,25 @@
     "jest": "^30.5.2",
     "prettier": "^3.9.10",
     "semantic-release": "^25.0.9"
+  },
+  "overrides": {
+    "eslint": {
+      "minimatch": "11.0.1"
+    },
+    "@eslint/config-array": {
+      "minimatch": "11.0.1"
+    },
+    "@jest/reporters": {
+      "minimatch": "11.0.1"
+    },
+    "jest-config": {
+      "minimatch": "11.0.1"
+    },
+    "jest-runtime": {
+      "minimatch": "11.0.1"
+    },
+    "test-exclude": {
+      "minimatch": "11.0.1"
+    }
   }
 }
