@@ -58,8 +58,8 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "@aws-sdk/client-ecs": "^3.1168.0",
-    "@aws-sdk/credential-providers": "^3.1168.0",
+    "@aws-sdk/client-ecs": "^3.1172.0",
+    "@aws-sdk/credential-providers": "^3.1172.0",
     "chalk": "^6.0.1",
     "commander": "^15.1.0",
     "conf": "^16.0.0",
